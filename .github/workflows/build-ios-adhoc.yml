@@ -45,7 +45,7 @@ jobs:
 
       - name: Archive signed app
         run: |
-          xcodebuild             -project ios/SarawakFMS.xcodeproj             -scheme SarawakFMS             -configuration Release             -sdk iphoneos             -archivePath build/SarawakFMS.xcarchive             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY="Apple Distribution"             DEVELOPMENT_TEAM="${{ steps.profile.outputs.team }}"             PROVISIONING_PROFILE_SPECIFIER="${{ steps.profile.outputs.name }}"             CURRENT_PROJECT_VERSION="${{ github.run_number }}"             archive
+          xcodebuild             -project ios/SarawakFMS.xcodeproj             -scheme SarawakFMS             -configuration Release             -sdk iphoneos             -archivePath build/SarawakFMS.xcarchive             CODE_SIGN_STYLE=Manual             CODE_SIGNING_ALLOWED=YES             CODE_SIGNING_REQUIRED=YES             CODE_SIGN_IDENTITY="Apple Distribution"             DEVELOPMENT_TEAM="${{ steps.profile.outputs.team }}"             PROVISIONING_PROFILE_SPECIFIER="${{ steps.profile.outputs.name }}"             CURRENT_PROJECT_VERSION="${{ github.run_number }}"             archive
 
       - name: Create Ad Hoc export options
         run: |
