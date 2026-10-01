@@ -1,0 +1,83 @@
+name: Build signed iPhone IPA (Ad Hoc)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Import Apple distribution certificate
+        uses: Apple-Actions/import-codesign-certs@v7
+        with:
+          p12-file-base64: ${{ secrets.APPSTORE_CERTIFICATES_FILE_BASE64 }}
+          p12-password: ${{ secrets.APPSTORE_CERTIFICATES_PASSWORD }}
+
+      - name: Download Ad Hoc provisioning profile
+        id: profiles
+        uses: Apple-Actions/download-provisioning-profiles@v6
+        with:
+          bundle-id: my.gov.sarawak.fms
+          profile-type: IOS_APP_ADHOC
+          issuer-id: ${{ vars.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ vars.APPSTORE_API_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+
+      - name: Detect downloaded profile
+        id: profile
+        shell: bash
+        run: |
+          PROFILE_PATH=$(find "$HOME/Library/MobileDevice/Provisioning Profiles" -name "*.mobileprovision" -print -quit)
+          if [ -z "$PROFILE_PATH" ]; then
+            echo "No provisioning profile was downloaded."
+            exit 1
+          fi
+          echo "path=$PROFILE_PATH" >> "$GITHUB_OUTPUT"
+          security cms -D -i "$PROFILE_PATH" > /tmp/profile.plist
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' /tmp/profile.plist)
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' /tmp/profile.plist)
+          echo "name=$PROFILE_NAME" >> "$GITHUB_OUTPUT"
+          echo "team=$TEAM_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Archive signed app
+        run: |
+          xcodebuild             -project ios/SarawakFMS.xcodeproj             -scheme SarawakFMS             -configuration Release             -sdk iphoneos             -archivePath build/SarawakFMS.xcarchive             CODE_SIGN_STYLE=Manual             CODE_SIGN_IDENTITY="Apple Distribution"             DEVELOPMENT_TEAM="${{ steps.profile.outputs.team }}"             PROVISIONING_PROFILE_SPECIFIER="${{ steps.profile.outputs.name }}"             CURRENT_PROJECT_VERSION="${{ github.run_number }}"             archive
+
+      - name: Create Ad Hoc export options
+        run: |
+          cat > build/ExportOptions.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>ad-hoc</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>teamID</key>
+            <string>__TEAM_ID__</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>my.gov.sarawak.fms</key>
+              <string>__PROFILE_NAME__</string>
+            </dict>
+          </dict>
+          </plist>
+          PLIST
+          sed -i '' "s|__TEAM_ID__|${{ steps.profile.outputs.team }}|g" build/ExportOptions.plist
+          sed -i '' "s|__PROFILE_NAME__|${{ steps.profile.outputs.name }}|g" build/ExportOptions.plist
+
+      - name: Export IPA
+        run: |
+          xcodebuild             -exportArchive             -archivePath build/SarawakFMS.xcarchive             -exportPath build/export             -exportOptionsPlist build/ExportOptions.plist
+
+      - name: Upload installable IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: sarawak-fms-iphone-adhoc
+          path: build/export/*.ipa
+          if-no-files-found: error
