@@ -305,3 +305,7 @@ td:first-child { color: #253a56; font-weight: 700; }
   .fuel-summary { grid-template-columns: 1fr; }
   .fuel-summary-card { padding: 12px 14px; }
 }
+
+.check-label { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; color: #67778b; font-size: 11px; font-weight: 500; line-height: 1.55; cursor: pointer; }
+.check-label input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 16px; margin: 1px 0 0; padding: 0; accent-color: #234f8d; box-shadow: none; }
+.check-label span { flex: 1; }
