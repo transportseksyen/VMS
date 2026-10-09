@@ -118,6 +118,8 @@ Deno.serve(async (request: Request) => {
       vehicles_requested: cars,
       passenger_names: String(a.passenger_names || "").trim(),
       destination,
+      purpose,
+      whatsapp_opt_in: Boolean(a.whatsapp_opt_in),
       hotel_provided: Boolean(a.hotel_provided),
       start_date: startDate,
       end_date: endDate,
