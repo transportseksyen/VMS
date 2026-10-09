@@ -334,7 +334,7 @@ using (private.has_agency_access(agency_id));
 drop policy if exists assignments_data_entry_insert on public.assignments;
 create policy assignments_data_entry_insert on public.assignments for insert to authenticated
 with check (
-  agency_id = private.current_agency_id()
+  (private.current_role() = 'super_admin' or agency_id = private.current_agency_id())
   and private.current_role() in ('data_entry','super_admin')
   and status = 'proposed'
   and exists (select 1 from public.applications ap where ap.id = application_id and ap.agency_id = assignments.agency_id and ap.status in ('pending_assignment','returned_for_correction'))
@@ -366,7 +366,7 @@ create policy maintenance_scoped_read on public.maintenance_records for select t
 using (private.has_agency_access(agency_id));
 drop policy if exists maintenance_data_entry_insert on public.maintenance_records;
 create policy maintenance_data_entry_insert on public.maintenance_records for insert to authenticated
-with check (agency_id = private.current_agency_id() and private.current_role() in ('data_entry','super_admin'));
+with check (private.current_role() = 'super_admin' or (agency_id = private.current_agency_id() and private.current_role() = 'data_entry'));
 drop policy if exists maintenance_data_entry_update on public.maintenance_records;
 create policy maintenance_data_entry_update on public.maintenance_records for update to authenticated
 using (private.current_role() in ('data_entry','super_admin') and private.has_agency_access(agency_id))
@@ -392,10 +392,13 @@ using (private.current_role() = 'super_admin' or (private.current_role() = 'flee
 
 -- Grant only the SQL privileges required by the role-gated policies.
 grant select on public.agencies to anon, authenticated;
-grant insert, select, update on public.profiles to authenticated;
+revoke insert, update on public.profiles from anon, authenticated;
+grant select on public.profiles to authenticated;
+grant update (full_name, phone, updated_at) on public.profiles to authenticated;
 grant select, insert, update on public.vehicles to authenticated;
 grant select, insert, update on public.drivers to authenticated;
-grant select, update on public.applications to authenticated;
+grant select on public.applications to authenticated;
+grant update (status, decision_reason, decided_by, decided_at, updated_at) on public.applications to authenticated;
 grant select, insert on public.assignments to authenticated;
 grant select, insert, update on public.fuel_transactions to authenticated;
 grant select, insert, update on public.maintenance_records to authenticated;
@@ -421,7 +424,10 @@ using (
   bucket_id = 'fms-documents' and (
     (array_length(storage.foldername(name), 1) >= 1
       and (storage.foldername(name))[1] = private.current_agency_id()::text
-      and private.has_agency_access(private.current_agency_id()))
+      and ((private.current_role() in ('fleet_manager','data_entry'))
+        or (private.current_role() = 'driver' and (storage.foldername(name))[2] = 'fuel'
+          and exists (select 1 from public.drivers d where d.id::text = (storage.foldername(name))[3] and d.profile_id = (select auth.uid())))))
+    or (private.current_role() = 'super_admin' and (storage.foldername(name))[1] <> 'incoming')
     or exists (select 1 from public.applications ap
       where ap.document_path = storage.objects.name and private.has_agency_access(ap.agency_id))
     or exists (select 1 from public.maintenance_documents md
@@ -436,6 +442,7 @@ with check (
   and private.current_role() in ('super_admin','fleet_manager','data_entry','driver')
   and (storage.foldername(name))[1] = private.current_agency_id()::text
   and private.has_agency_access(private.current_agency_id())
+  and (private.current_role() <> 'driver' or ((storage.foldername(name))[2] = 'fuel' and exists (select 1 from public.drivers d where d.id::text = (storage.foldername(name))[3] and d.profile_id = (select auth.uid()))))
 );
 drop policy if exists fms_agency_document_update on storage.objects;
 create policy fms_agency_document_update on storage.objects for update to authenticated
@@ -461,7 +468,7 @@ begin
   if (select auth.uid()) is null then raise exception 'Authentication required'; end if;
   v_role := private.current_role();
   v_my_agency := private.current_agency_id();
-  if v_role not in ('fleet_manager','super_admin') then raise exception 'Only a Fleet Manager or Super Admin can approve assignments'; end if;
+  if coalesce(v_role,'') not in ('fleet_manager','super_admin') then raise exception 'Only a Fleet Manager or Super Admin can approve assignments'; end if;
 
   select a.agency_id, a.application_id, a.vehicle_id, a.driver_id, a.start_date, a.end_date, a.status
   into v_agency, v_application, v_vehicle, v_driver, v_start, v_end, v_status
@@ -513,7 +520,7 @@ begin
   if (select auth.uid()) is null then raise exception 'Authentication required'; end if;
   if coalesce(length(trim(p_reason)),0) < 3 then raise exception 'A rejection reason is required'; end if;
   v_role := private.current_role();
-  if v_role not in ('fleet_manager','super_admin') then raise exception 'Only a Fleet Manager or Super Admin can reject assignments'; end if;
+  if coalesce(v_role,'') not in ('fleet_manager','super_admin') then raise exception 'Only a Fleet Manager or Super Admin can reject assignments'; end if;
   select a.agency_id, a.application_id, a.status into v_agency, v_application, v_status
   from public.assignments a where a.id = p_assignment_id for update;
   if not found then raise exception 'Assignment not found'; end if;
