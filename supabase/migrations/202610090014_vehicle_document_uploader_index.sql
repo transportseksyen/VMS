@@ -1,0 +1,1 @@
+create index if not exists fms_vehicle_documents_uploaded_by_idx on public.fms_vehicle_documents(uploaded_by);
