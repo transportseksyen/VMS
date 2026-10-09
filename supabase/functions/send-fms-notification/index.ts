@@ -34,7 +34,7 @@ async function sendWhatsApp(phone: string, reference: string, statusMessage: str
   if (!accessToken || !phoneNumberId || !graphVersion || !templateName) {
     return { status: "not_configured", error: null };
   }
-  if (!/^v\\d+\\.\\d+$/.test(graphVersion)) {
+  if (!/^v\d+\.\d+$/.test(graphVersion)) {
     return { status: "failed", error: "WHATSAPP_GRAPH_API_VERSION must look like vNN.0" };
   }
   const recipient = normalizeWhatsAppNumber(phone);
@@ -69,7 +69,7 @@ async function sendWhatsApp(phone: string, reference: string, statusMessage: str
 function normalizeWhatsAppNumber(raw: string): string | null {
   const trimmed = String(raw || "").trim();
   if (!trimmed) return null;
-  let digits = trimmed.replace(/\\D/g, "");
+  let digits = trimmed.replace(/\D/g, "");
   if (!digits) return null;
   if (trimmed.startsWith("+")) return digits.length >= 10 && digits.length <= 15 ? digits : null;
   if (digits.startsWith("60")) return digits.length >= 10 && digits.length <= 15 ? digits : null;
@@ -99,13 +99,66 @@ Deno.serve(async (request: Request) => {
     const { data: actor } = await admin.from("fms_profiles").select("id,role,agency_id,status").eq("id", authData.user.id).maybeSingle();
     if (!actor || actor.status !== "active") return reply(403, { error: "An active FMS account is required" });
     const isSubmissionNotice = type === "assignment-submitted";
+    const isFuelSubmission = type === "fuel-submitted";
     if (isSubmissionNotice) {
       if (!["data_entry","fleet_manager","super_admin"].includes(actor.role)) return reply(403, { error: "Only authorized fleet staff may submit assignments for review" });
+    } else if (isFuelSubmission) {
+      if (actor.role !== "driver") return reply(403, { error: "Only the assigned driver may notify reviewers about a fuel submission" });
     } else if (!["fleet_manager","super_admin"].includes(actor.role)) {
       return reply(403, { error: "Only authorized Fleet Managers can send decision notifications" });
     }
     const fuelDecision = type === "fuel-approved" || type === "fuel-returned";
-    if (!["assignment-approved","assignment-rejected","assignment-returned","assignment-cancelled","assignment-submitted","fuel-approved","fuel-returned"].includes(type)) return reply(400, { error: "Unsupported notification type" });
+    if (!["assignment-approved","assignment-rejected","assignment-returned","assignment-cancelled","assignment-submitted","fuel-approved","fuel-returned","fuel-submitted"].includes(type)) return reply(400, { error: "Unsupported notification type" });
+
+    if (isFuelSubmission) {
+      if (!fuelTransactionId) return reply(400, { error: "Fuel transaction ID is required" });
+      const { data: fuel, error: fuelError } = await admin.from("fms_fuel_transactions")
+        .select("id,agency_id,driver_id,vehicle_id,reporting_month,purchase_date,odometer_reading,litres,amount_rm,status")
+        .eq("id", fuelTransactionId).maybeSingle();
+      if (fuelError || !fuel) return reply(404, { error: "Fuel transaction not found" });
+      if (fuel.status !== "submitted") return reply(409, { error: "Only submitted fuel reports can notify reviewers" });
+      const { data: driver, error: driverError } = await admin.from("fms_drivers")
+        .select("id,profile_id,agency_id,full_name,account_status,approval_status")
+        .eq("id", fuel.driver_id).eq("profile_id", actor.id).maybeSingle();
+      if (driverError || !driver || driver.agency_id !== fuel.agency_id ||
+          driver.account_status !== "active" || driver.approval_status !== "approved" ||
+          actor.agency_id !== fuel.agency_id) {
+        return reply(403, { error: "The authenticated driver is not authorized for this fuel report" });
+      }
+      const { data: staffRows, error: staffError } = await admin.from("fms_profiles")
+        .select("id,full_name,email,role,agency_id")
+        .eq("status","active").in("role",["fleet_manager","super_admin"]);
+      if (staffError) return reply(503, { error: "Reviewer list could not be checked" });
+      const recipients = (staffRows || []).filter((staff: Record<string,any>) =>
+        staff.role === "super_admin" || staff.agency_id === fuel.agency_id
+      );
+      if (!recipients.length) return reply(503, { error: "No active Fleet Manager or Super Admin is configured to receive this report" });
+      const subject = "FMS fuel report awaiting review — " + fuel.reporting_month;
+      const statuses = await Promise.all(recipients.map(async (staff: Record<string,any>) => {
+        const result = await sendEmail(
+          String(staff.email || ""), subject,
+          "<p>Dear " + esc(staff.full_name || "Fleet Manager") + ",</p>" +
+          "<p>A fuel report has been submitted and is awaiting review.</p>" +
+          "<p><strong>Driver:</strong> " + esc(driver.full_name) +
+          "<br><strong>Reporting month:</strong> " + esc(fuel.reporting_month) +
+          "<br><strong>Purchase date:</strong> " + esc(fuel.purchase_date) +
+          "<br><strong>Fuel quantity:</strong> " + Number(fuel.litres || 0) + " L" +
+          "<br><strong>Total cost:</strong> RM " + Number(fuel.amount_rm || 0).toFixed(2) +
+          "<br><strong>Odometer:</strong> " + Number(fuel.odometer_reading || 0) + " km</p>" +
+          "<p>Sign in to FMS to review the report and receipt.</p><p>Fleet Management System — Sarawak</p>"
+        );
+        await admin.from("fms_notifications").insert({
+          recipient_profile_id: staff.id, recipient_email: staff.email, subject,
+          body: "Fuel report awaiting review for " + fuel.reporting_month,
+          notification_type: "fuel_report_submitted", related_table: "fms_fuel_transactions",
+          related_record_id: fuel.id, email_status: result.status,
+          email_error: result.error ? String(result.error).slice(0,1000) : null,
+          sent_at: result.status === "sent" ? new Date().toISOString() : null
+        });
+        return { recipient: staff.email, status: result.status };
+      }));
+      return reply(200, { success: true, recipients: recipients.length, statuses });
+    }
 
     if (fuelDecision) {
       if (!fuelTransactionId) return reply(400, { error: "Fuel transaction ID is required" });
@@ -141,6 +194,9 @@ Deno.serve(async (request: Request) => {
     const { data: application } = await admin.from("fms_applications").select("*").eq("id", applicationId).maybeSingle();
     if (!application) return reply(404, { error: "Application not found" });
     if (actor.role !== "super_admin" && actor.agency_id !== application.agency_id) return reply(403, { error: "Agency access denied" });
+    if (type === "assignment-approved" && application.status !== "approved") return reply(409, { error: "Application is not in the approved state" });
+    if (type === "assignment-rejected" && application.status !== "rejected") return reply(409, { error: "Application is not in the rejected state" });
+    if (type === "assignment-returned" && application.status !== "returned_for_correction") return reply(409, { error: "Application is not in the returned-for-correction state" });
 
     if (isSubmissionNotice) {
       if (application.status !== "pending_manager_approval") return reply(400, { error: "Application is not waiting for Fleet Manager approval" });
@@ -203,6 +259,10 @@ Deno.serve(async (request: Request) => {
     let vehicle: Record<string, any> | null = null;
     if (assignmentId) {
       const { data: assignment } = await admin.from("fms_assignments").select("id,application_id,driver_id,vehicle_id,status,start_date,end_date").eq("id", assignmentId).eq("application_id", applicationId).maybeSingle();
+      if (!assignment) return reply(404, { error: "Assignment not found for this application" });
+      if (type === "assignment-cancelled" && assignment.status !== "cancelled") return reply(409, { error: "Assignment must be cancelled before sending a cancellation notification" });
+      if (type === "assignment-approved" && assignment.status !== "approved") return reply(409, { error: "Assignment is not approved" });
+      if (type === "assignment-rejected" && assignment.status !== "rejected") return reply(409, { error: "Assignment is not rejected" });
       if (assignment) {
         const [driverResult, vehicleResult] = await Promise.all([
           admin.from("fms_drivers").select("full_name,email,phone,whatsapp_opt_in").eq("id", assignment.driver_id).maybeSingle(),
