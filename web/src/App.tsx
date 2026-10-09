@@ -525,8 +525,20 @@ export default function App() {
     );
   }
 
+  async function bootstrapFirstAdmin() {
+    if (!supabase || !session?.user) return;
+    setBusy(true); setError(''); setNotice('');
+    const { data, error: bootstrapError } = await supabase.functions.invoke('bootstrap-admin', { body: {} });
+    if (bootstrapError || data?.error) {
+      setError(data?.error || bootstrapError?.message || 'Could not bootstrap the first Super Admin.');
+    } else {
+      setNotice(data?.message || 'First Super Admin created.');
+      await loadProfile(session.user.id);
+    }
+    setBusy(false);
+  }
   if (profileMissing || !profile) {
-    return <div className="setup-page"><Brand /><div className="setup-card"><div className="status-mark">!</div><h2>Account awaiting authorization</h2><p>Your staff account is authenticated, but no FMS role has been assigned. Ask the Super Admin to provision your profile and agency access.</p>{error && <p className="error-text">{error}</p>}<button className="btn btn-primary" onClick={signOut}>Sign out</button></div></div>;
+    return <div className="setup-page"><Brand /><div className="setup-card"><div className="status-mark">!</div><h2>Account awaiting authorization</h2><p>Your staff account is authenticated, but no FMS role has been assigned. Ask the Super Admin to provision your profile and agency access.</p>{error && <p className="error-text">{error}</p>}{notice && <p className="success-text">{notice}</p>}<button className="btn btn-primary btn-wide" disabled={busy} onClick={bootstrapFirstAdmin}>{busy ? 'Checking bootstrap access…' : 'Set up first Super Admin'} <span>→</span></button><p className="tiny-note">This works only for the email explicitly allow-listed in Supabase Function Secrets and only before another Super Admin exists.</p><button className="btn btn-outline btn-wide" onClick={signOut}>Sign out</button></div></div>;
   }
 
   const nav = navByRole[profile.role] || [];
