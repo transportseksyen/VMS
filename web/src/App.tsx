@@ -119,9 +119,10 @@ export default function App() {
       ['fuel_transactions', 'fms_fuel_transactions'],
       ['maintenance_records', 'fms_maintenance_records']
     ];
+    const client = supabase;
     const next: Record<string, number> = {};
     await Promise.all(names.map(async ([key, table]) => {
-      const { count } = await (supabase.from(table as any) as any).select('id', { count: 'exact', head: true });
+      const { count } = await (client.from(table as any) as any).select('id', { count: 'exact', head: true });
       next[key] = count || 0;
     }));
     setCounts(next);
@@ -668,7 +669,7 @@ function vehiclesForFuel(rows: Row[], agencyId: string | null) {
   return rows.filter(r => r.agency_id === agencyId && r.approval_status === 'approved');
 }
 function glyphFor(view: View) {
-  const glyphs: Record<View, string> = { dashboard:'▦', applications:'▤', vehicles:'▰', drivers:'♙', assignments:'⇄', fuel:'◉', maintenance:'⌁', users:'♧', availability:'◷', reports:'▥' };
+  const glyphs: Record<View, string> = { dashboard:'▦', agencies:'⌂', applications:'▤', vehicles:'▰', drivers:'♙', assignments:'⇄', fuel:'◉', maintenance:'⌁', users:'♧', availability:'◷', reports:'▥' };
   return glyphs[view];
 }
 function welcomeLine(view: View, role: Role) {
