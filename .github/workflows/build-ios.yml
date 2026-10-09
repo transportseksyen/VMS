@@ -25,13 +25,13 @@ jobs:
 
       - name: Package unsigned app
         run: |
-          APP_PATH="$(find build/ios -type d -name 'SarawakFMS.app' -print -quit)"
+          APP_PATH="$(find build/ios -type d -name '*.app' -print -quit)"
           if [ -z "$APP_PATH" ]; then
-            echo "SarawakFMS.app was not found under build/ios"
-            find build/ios -maxdepth 7 -type d -name '*.app' -print || true
+            echo "No .app bundle was found under build/ios"
+            find build/ios -maxdepth 7 -print | head -200
             exit 1
           fi
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" SarawakFMS-iOS-unsigned.zip
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" FMS-iOS-unsigned.zip
 
       - name: Upload iOS app artifact
         uses: actions/upload-artifact@v4
