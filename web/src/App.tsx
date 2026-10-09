@@ -706,16 +706,16 @@ function Dashboard({ profile, counts, onNavigate }: { profile: Profile; counts: 
   </div>;
 }
 
-function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject }: { rows: Row[]; kind: string; loading: boolean; role: Role; onAssign?: (r: Row) => void; onApprove?: (r: Row) => void; onReject?: (r: Row) => void }) {
+function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, onDocument }: { rows: Row[]; kind: string; loading: boolean; role: Role; onAssign?: (r: Row) => void; onApprove?: (r: Row) => void; onReject?: (r: Row) => void; onDocument?: (path: string) => void }) {
   if (loading) return <Loading />;
   const columns: Record<string, {key:string;label:string}[]> = {
     agencies: [{key:'name',label:'Agency name'},{key:'code',label:'Code'},{key:'is_active',label:'Status'}],
-    applications: [{key:'reference',label:'Reference'},{key:'applicant_name',label:'Applicant'},{key:'destination',label:'Destination'},{key:'start_date',label:'Start'},{key:'end_date',label:'End'},{key:'status',label:'Status'}],
+    applications: [{key:'reference',label:'Reference'},{key:'applicant_name',label:'Applicant'},{key:'destination',label:'Destination'},{key:'start_date',label:'Start'},{key:'end_date',label:'End'},{key:'document_path',label:'PDF'},{key:'status',label:'Status'}],
     vehicles: [{key:'brand',label:'Brand'},{key:'model',label:'Model'},{key:'vehicle_type',label:'Type'},{key:'plate_number',label:'Registration'},{key:'approval_status',label:'Approval'},{key:'vehicle_status',label:'Status'}],
     drivers: [{key:'full_name',label:'Driver'},{key:'email',label:'Email'},{key:'phone',label:'Phone'},{key:'availability_status',label:'Availability'},{key:'approval_status',label:'Approval'}],
     assignments: [{key:'application',label:'Request'},{key:'vehicle',label:'Vehicle'},{key:'driver',label:'Driver'},{key:'start_date',label:'Start'},{key:'end_date',label:'End'},{key:'status',label:'Status'}],
-    fuel: [{key:'reporting_month',label:'Month'},{key:'purchase_date',label:'Purchase date'},{key:'odometer_reading',label:'Odometer'},{key:'litres',label:'Litres'},{key:'amount_rm',label:'Cost (RM)'},{key:'status',label:'Status'}],
-    maintenance: [{key:'vehicle_id',label:'Vehicle ID'},{key:'category',label:'Category'},{key:'description',label:'Description'},{key:'date_reported',label:'Reported'},{key:'status',label:'Status'}],
+    fuel: [{key:'reporting_month',label:'Month'},{key:'purchase_date',label:'Purchase date'},{key:'odometer_reading',label:'Odometer'},{key:'litres',label:'Litres'},{key:'amount_rm',label:'Cost (RM)'},{key:'receipt_path',label:'Receipt'},{key:'status',label:'Status'}],
+    maintenance: [{key:'vehicle_id',label:'Vehicle ID'},{key:'category',label:'Category'},{key:'description',label:'Description'},{key:'date_reported',label:'Reported'},{key:'documents',label:'Documents'},{key:'status',label:'Status'}],
     users: [{key:'full_name',label:'Name'},{key:'role',label:'Role'},{key:'agency_id',label:'Agency ID'},{key:'status',label:'Account'}]
   };
   const cols = columns[kind] || [];
@@ -724,15 +724,47 @@ function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject }:
     if (key === 'vehicle') return row.vehicles ? row.vehicles.plate_number + ' · ' + row.vehicles.brand + ' ' + row.vehicles.model : row.vehicle_id?.slice(0,8) || '—';
     if (key === 'driver') return row.drivers?.full_name || row.driver_id?.slice(0,8) || '—';
     if (key === 'is_active') return row.is_active ? 'Active' : 'Inactive';
+    if (key === 'documents') return (row.documents || []).length ? row.documents.length + ' file(s)' : '—';
     const v = row[key];
     if (['start_date','end_date','purchase_date','date_reported'].includes(key)) return dateText(v);
     if (key === 'amount_rm') return moneyText(v);
     if (key === 'role') return roleTitles[v as Role] || statusText(v);
     return v === null || v === undefined || v === '' ? '—' : String(v);
   }
-  return <div className="table-wrap">{rows.length === 0 ? <div className="empty-state"><div>▤</div><strong>No records yet</strong><p>Records will appear here when they are saved in FMS.</p></div> : <table><thead><tr>{cols.map(c => <th key={c.key}>{c.label}</th>)}{(kind === 'applications' && role === 'data_entry' || (kind === 'assignments' && (role === 'fleet_manager' || role === 'super_admin')) || ((kind === 'vehicles' || kind === 'drivers' || kind === 'users') && (role === 'fleet_manager' || role === 'super_admin')) || (kind === 'agencies' && role === 'super_admin')) && <th>Action</th>}</tr></thead><tbody>{rows.map(row => <tr key={row.id || row.reference}>{cols.map(c => <td key={c.key}>{c.key.includes('status') ? <span className={'status-pill ' + String(row[c.key] || '').replaceAll('_','-')}>{statusText(value(row,c.key))}</span> : value(row,c.key)}</td>)}{kind === 'applications' && role === 'data_entry' ? <td>{row.status === 'pending_assignment' ? <button className="btn btn-small btn-outline" onClick={() => onAssign?.(row)}>Assign</button> : <span className="muted">—</span>}</td> : null}{kind === 'assignments' && (role === 'fleet_manager' || role === 'super_admin') ? <td>{row.status === 'proposed' ? <div className="action-pair"><button className="btn btn-small btn-primary" onClick={() => onApprove?.(row)}>Approve</button><button className="btn btn-small btn-danger" onClick={() => onReject?.(row)}>Reject</button></div> : <span className="muted">—</span>}</td> : null}{(kind === 'vehicles' || kind === 'drivers') && (role === 'fleet_manager' || role === 'super_admin') ? <td>{row.approval_status === 'pending' || row.approval_status === 'returned' ? <button className="btn btn-small btn-primary" onClick={() => onApprove?.(row)}>Approve</button> : <span className="muted">—</span>}</td> : null}{kind === 'users' && (role === 'fleet_manager' || role === 'super_admin') ? <td>{row.status === 'pending' ? <button className="btn btn-small btn-primary" onClick={() => onApprove?.(row)}>Approve account</button> : <span className="muted">—</span>}</td> : null}{kind === 'agencies' && role === 'super_admin' ? <td><button className={'btn btn-small ' + (row.is_active ? 'btn-danger' : 'btn-primary')} onClick={() => onApprove?.(row)}>{row.is_active ? 'Deactivate' : 'Activate'}</button></td> : null}</tr>)}</tbody></table>}</div>;
+  return <div className="table-wrap">{rows.length === 0 ? <div className="empty-state"><div>▤</div><strong>No records yet</strong><p>Records will appear here when they are saved in FMS.</p></div> : <table><thead><tr>{cols.map(c => <th key={c.key}>{c.label}</th>)}{(kind === 'applications' && role === 'data_entry' || (kind === 'assignments' && (role === 'fleet_manager' || role === 'super_admin')) || ((kind === 'vehicles' || kind === 'drivers' || kind === 'users') && (role === 'fleet_manager' || role === 'super_admin')) || (kind === 'agencies' && role === 'super_admin') || (kind === 'fuel' && (role === 'fleet_manager' || role === 'super_admin'))) && <th>Action</th>}</tr></thead><tbody>{rows.map(row => <tr key={row.id || row.reference}>{cols.map(c => <td key={c.key}>{c.key === 'document_path' && row.document_path ? <button className="btn btn-small btn-outline" onClick={() => onDocument?.(row.document_path)}>Open PDF</button> : c.key === 'receipt_path' && row.receipt_path ? <button className="btn btn-small btn-outline" onClick={() => onDocument?.(row.receipt_path)}>Open receipt</button> : c.key === 'documents' && row.documents?.length ? <div className="doc-buttons">{row.documents.map((doc: Row) => <button className="btn btn-small btn-outline" key={doc.id} onClick={() => onDocument?.(doc.file_path)}>{statusText(doc.document_type)}</button>)}</div> : c.key.includes('status') ? <span className={'status-pill ' + String(row[c.key] || '').replaceAll('_','-')}>{statusText(value(row,c.key))}</span> : value(row,c.key)}</td>)}{kind === 'applications' && role === 'data_entry' ? <td>{row.status === 'pending_assignment' ? <button className="btn btn-small btn-outline" onClick={() => onAssign?.(row)}>Assign</button> : <span className="muted">—</span>}</td> : null}{kind === 'assignments' && (role === 'fleet_manager' || role === 'super_admin') ? <td>{row.status === 'proposed' ? <div className="action-pair"><button className="btn btn-small btn-primary" onClick={() => onApprove?.(row)}>Approve</button><button className="btn btn-small btn-danger" onClick={() => onReject?.(row)}>Reject</button></div> : <span className="muted">—</span>}</td> : null}{(kind === 'vehicles' || kind === 'drivers') && (role === 'fleet_manager' || role === 'super_admin') ? <td>{row.approval_status === 'pending' || row.approval_status === 'returned' ? <button className="btn btn-small btn-primary" onClick={() => onApprove?.(row)}>Approve</button> : <span className="muted">—</span>}</td> : null}{kind === 'users' && (role === 'fleet_manager' || role === 'super_admin') ? <td>{row.status === 'pending' ? <button className="btn btn-small btn-primary" onClick={() => onApprove?.(row)}>Approve account</button> : <span className="muted">—</span>}</td> : null}{kind === 'agencies' && role === 'super_admin' ? <td><button className={'btn btn-small ' + (row.is_active ? 'btn-danger' : 'btn-primary')} onClick={() => onApprove?.(row)}>{row.is_active ? 'Deactivate' : 'Activate'}</button></td> : null}{kind === 'fuel' && (role === 'fleet_manager' || role === 'super_admin') ? <td>{row.status === 'submitted' ? <div className="action-pair"><button className="btn btn-small btn-primary" onClick={() => onApprove?.(row)}>Approve</button><button className="btn btn-small btn-danger" onClick={() => onReject?.(row)}>Return</button></div> : <span className="muted">—</span>}</td> : null}</tr>)}</tbody></table>}</div>;
 }
 function Loading() { return <div className="loading-state"><span className="spinner" />Loading records…</div>; }
+function AssignmentCalendar({ rows }: { rows: Row[] }) {
+  const [month, setMonth] = useState(() => new Date().getUTCMonth());
+  const [year, setYear] = useState(() => new Date().getUTCFullYear());
+  const monthStart = new Date(Date.UTC(year, month, 1));
+  const monthLabel = new Intl.DateTimeFormat('en-MY', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(monthStart);
+  const startOffset = (monthStart.getUTCDay() + 6) % 7;
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const cells = Array.from({ length: startOffset + daysInMonth }, (_, i) => i < startOffset ? null : i - startOffset + 1);
+  const approved = rows.filter(row => row.status === 'approved');
+  const dayKey = (day: number) => new Date(Date.UTC(year, month, day)).toISOString().slice(0, 10);
+  const countForDay = (day: number) => approved.filter(row => row.start_date <= dayKey(day) && row.end_date >= dayKey(day)).length;
+  function changeMonth(delta: number) {
+    const next = new Date(Date.UTC(year, month + delta, 1));
+    setMonth(next.getUTCMonth()); setYear(next.getUTCFullYear());
+  }
+  return <section className="panel calendar-panel">
+    <div className="calendar-header"><div><div className="card-kicker">APPROVED TRIPS</div><h2>Assignment calendar</h2><p>Only confirmed assignments count toward the daily schedule.</p></div><div className="calendar-controls"><button className="btn btn-small btn-outline" onClick={() => changeMonth(-1)}>←</button><strong>{monthLabel}</strong><button className="btn btn-small btn-outline" onClick={() => changeMonth(1)}>→</button></div></div>
+    <div className="calendar-grid">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(day => <div className="calendar-weekday" key={day}>{day}</div>)}{cells.map((day, index) => day === null ? <div className="calendar-blank" key={'blank-'+index} /> : <div className={'calendar-day ' + (countForDay(day) ? 'has-trips' : '')} key={day}><span>{day}</span>{countForDay(day) > 0 && <small>{countForDay(day)} trip{countForDay(day) === 1 ? '' : 's'}</small>}</div>)}</div>
+    <div className="calendar-legend"><span><i /> Confirmed assignments</span><span>{approved.length} approved assignment(s) in the loaded records</span></div>
+  </section>;
+}
+
+function FuelSummary({ rows }: { rows: Row[] }) {
+  const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuching', year: 'numeric', month: '2-digit' }).format(new Date());
+  const monthRows = rows.filter(row => row.reporting_month === month);
+  const amount = monthRows.reduce((sum, row) => sum + Number(row.amount_rm || 0), 0);
+  const litres = monthRows.reduce((sum, row) => sum + Number(row.litres || 0), 0);
+  const avg = litres > 0 ? amount / litres : 0;
+  return <div className="fuel-summary"><div className="fuel-summary-card"><small>Current month · {month}</small><span>Recorded fuel expenditure</span><strong>{moneyText(amount)}</strong></div><div className="fuel-summary-card"><small>Volume</small><span>Total litres recorded</span><strong>{litres.toLocaleString('en-MY',{maximumFractionDigits:2})} L</strong></div><div className="fuel-summary-card"><small>Average price</small><span>Based on recorded transactions</span><strong>{moneyText(avg)} / L</strong></div></div>;
+}
+
 function Reports({ counts }: { counts: Record<string, number> }) {
   const items = [{label:'Applications',value:counts.applications || 0},{label:'Vehicles',value:counts.vehicles || 0},{label:'Drivers',value:counts.drivers || 0},{label:'Assignments',value:counts.assignments || 0},{label:'Fuel transactions',value:counts.fuel_transactions || 0},{label:'Maintenance records',value:counts.maintenance_records || 0}];
   const max = Math.max(1, ...items.map(i => i.value));
