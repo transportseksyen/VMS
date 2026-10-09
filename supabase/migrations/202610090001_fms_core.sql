@@ -14,6 +14,7 @@ create table if not exists public.fms_agencies (
 create table if not exists public.fms_profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text not null default '',
+  email text,
   role text not null check (role in ('super_admin','fleet_manager','data_entry','driver')),
   agency_id uuid references public.fms_agencies(id),
   phone text,
@@ -591,9 +592,9 @@ begin
 end;
 $$;
 
-revoke all on function public.fms_fms_approve_assignment(uuid) from public, anon;
-revoke all on function public.fms_fms_reject_assignment(uuid,text) from public, anon;
-grant execute on function public.fms_fms_approve_assignment(uuid) to authenticated;
-grant execute on function public.fms_fms_reject_assignment(uuid,text) to authenticated;
+revoke all on function public.fms_approve_assignment(uuid) from public, anon;
+revoke all on function public.fms_reject_assignment(uuid,text) from public, anon;
+grant execute on function public.fms_approve_assignment(uuid) to authenticated;
+grant execute on function public.fms_reject_assignment(uuid,text) to authenticated;
 
 commit;
