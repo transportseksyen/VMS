@@ -167,6 +167,7 @@ h1, h2, h3, strong { font-family: 'Manrope', 'DM Sans', sans-serif; }
 .note-grid p { color: #8692a3; font-size: 9px; line-height: 1.55; margin: 0; }
 .note-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 .gold-dot { background: #c6a35b; }.blue-dot { background: #4a78b5; }.green-dot { background: #49a17c; }
+.table-actions { display: flex; justify-content: flex-end; margin: 0 0 10px; }
 .table-wrap { overflow: auto; width: 100%; }
 table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 620px; font-size: 11px; }
 th { color: #8190a4; background: #f8fafc; text-transform: uppercase; letter-spacing: .06em; font-size: 9px; font-weight: 800; padding: 12px 12px; text-align: left; border-top: 1px solid #edf0f4; border-bottom: 1px solid #e7ebf1; }
