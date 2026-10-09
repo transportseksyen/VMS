@@ -1,0 +1,49 @@
+name: FMS Web CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/fms-web-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/fms-web-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: TypeScript and Vite production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package.json
+
+      - name: Install pinned dependencies
+        working-directory: web
+        run: npm install --no-audit --no-fund
+
+      - name: Build production web app
+        working-directory: web
+        run: npm run build
+
+      - name: Verify PWA shell assets
+        working-directory: web
+        run: |
+          test -f public/manifest.webmanifest
+          test -f public/sw.js
+          test -f public/fms-icon.svg
+          test -f public/fms-maskable-icon.svg
