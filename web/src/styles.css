@@ -315,3 +315,38 @@ td:first-child { color: #253a56; font-weight: 700; }
 .inline-role-form label { min-width: 0; }
 .inline-role-form select { padding: 8px; font-size: 12px; }
 @media (max-width: 640px) { .inline-role-form { grid-template-columns: 1fr; min-width: 220px; } }
+
+
+/* System health and audit additions */
+.settings-stack { display: grid; gap: 18px; }
+.settings-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.settings-heading .panel-heading { margin-bottom: 0; }
+.health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+.health-card { display: flex; align-items: flex-start; gap: 13px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: #fff; min-width: 0; }
+.health-card-icon { width: 42px; height: 42px; flex: 0 0 42px; display: grid; place-items: center; border-radius: 12px; background: #eef2f8; color: var(--navy); font-size: 11px; font-weight: 800; letter-spacing: .02em; }
+.health-card > div:last-child { display: grid; gap: 6px; min-width: 0; }
+.health-card strong { font-size: 14px; color: var(--navy); }
+.health-card small { color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+.health-status { display: inline-flex; width: fit-content; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 800; }
+.health-status.is-ready { color: #176347; background: #e7f6ef; }
+.health-status.is-warning { color: #895b08; background: #fff2d8; }
+.settings-checklist { display: grid; gap: 14px; margin: 0; padding-left: 22px; }
+.settings-checklist li { padding-left: 4px; }
+.settings-checklist strong, .settings-checklist span { display: block; }
+.settings-checklist strong { color: var(--navy); margin-bottom: 4px; }
+.settings-checklist span { color: var(--muted); line-height: 1.6; }
+@media (max-width: 740px) {
+  .health-grid { grid-template-columns: 1fr; }
+  .settings-heading { flex-direction: column; }
+  .settings-heading > button { width: 100%; }
+}
+@media print {
+  @page { size: A4 portrait; margin: 12mm; }
+  body { background: #fff !important; color: #111 !important; }
+  .sidebar, .topbar, .main-footer, .table-actions, .btn, button, .modal-backdrop { display: none !important; }
+  .app-shell, .main-content, .page-content, .panel { display: block !important; width: 100% !important; max-width: none !important; margin: 0 !important; padding: 0 !important; box-shadow: none !important; border: 0 !important; background: #fff !important; }
+  .panel { page-break-inside: avoid; margin-bottom: 8mm !important; }
+  table { width: 100% !important; border-collapse: collapse !important; font-size: 9pt !important; }
+  th, td { border: 1px solid #bbb !important; padding: 5px !important; color: #111 !important; }
+  h1, h2, h3, strong { color: #111 !important; }
+}
