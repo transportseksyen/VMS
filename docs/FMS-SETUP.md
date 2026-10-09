@@ -35,7 +35,12 @@ Configure these under Supabase → Edge Functions → Secrets, or using the Supa
 - `FMS_BOOTSTRAP_ADMIN_EMAIL`: exact email address allowed to create the first Super Admin. Set this only for initial bootstrap.
 - `RESEND_API_KEY`: Resend transactional email API key.
 - `FMS_EMAIL_FROM`: verified sender, for example `FMS <notifications@your-verified-domain.example>`.
-- `FMS_INVITE_REDIRECT_URL`: optional application URL used for staff invitation links after a public deployment is available.
+- `FMS_INVITE_REDIRECT_URL`: `https://transportseksyen.github.io/VMS/` (use the live FMS URL for invitation redirects).
+- `WHATSAPP_ACCESS_TOKEN`: access token for the Meta WhatsApp Business Cloud API.
+- `WHATSAPP_PHONE_NUMBER_ID`: sender phone-number ID from the Meta WhatsApp Business account.
+- `WHATSAPP_GRAPH_API_VERSION`: the current supported Graph API version for your Meta app, formatted like `vNN.0`.
+- `WHATSAPP_TEMPLATE_NAME`: the approved Utility template name for trip/request updates.
+- `WHATSAPP_TEMPLATE_LANGUAGE`: template language code, such as `en_US` or `ms`, matching the approved template.
 
 Supabase's built-in `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are read only inside Edge Functions. Never create `VITE_SUPABASE_SERVICE_ROLE_KEY` or expose a service-role key in frontend code.
 
@@ -46,6 +51,8 @@ The functions deployed to the current Supabase project are:
 - `bootstrap-admin` — allowlisted first administrator creation.
 
 Email actions report `not_configured` if the Resend secrets are not set. Staff invitations also depend on the Supabase Auth email configuration.
+
+WhatsApp notifications are implemented through Meta's Cloud API using an approved template with three body parameters: request reference (`{{1}}`), status/message (`{{2}}`) and context (`{{3}}`). For example: `FMS update for request {{1}}: {{2}}. {{3}}`. Ensure the template is approved and enabled in the matching language before configuring the function secrets. Only applicants and drivers who explicitly opt in through FMS are sent WhatsApp updates. Meta requires opt-in and approved templates for business-initiated conversations; see [Meta WhatsApp Cloud API](https://www.postman.com/meta/whatsapp-business-platform/documentation/wlk6lh4/whatsapp-cloud-api) and the [WhatsApp Business Policy](https://whatsappbusiness.com/policy/?faq=5).
 
 ## First-time administrator bootstrap
 
@@ -120,7 +127,7 @@ The following still require further implementation/testing before the platform c
 - Multi-vehicle assignments when an application requests more than one vehicle.
 - Full CRUD/edit/delete flows with approval history for every registry type.
 - Complete exports to PDF/Excel and richer monthly/yearly reporting.
-- SMS/WhatsApp notifications (email is the current notification channel).
+- WhatsApp delivery still needs the real Meta business account, a supported Graph API version, the approved Utility template, access token and phone-number ID to be set in Function Secrets. The code records delivery status and only sends to recipients who opted in.
 - End-to-end testing of assignment changes/cancellations and email delivery.
 - Final official crest asset and agency-approved privacy text.
 - Production deployment URL and real-device validation.
