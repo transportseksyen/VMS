@@ -235,7 +235,7 @@ Deno.serve(async (request: Request) => {
         "<p>Dear " + esc(requester.full_name || "FMS user") + ",</p><p>Your proposed change to <strong>" + esc(entityLabel) + "</strong> was " + expected + ".</p>" +
         (change.decision_reason ? "<p><strong>Reason / instructions:</strong> " + esc(change.decision_reason) + "</p>" : "") +
         "<p>Fleet Management System — Sarawak</p>");
-      const notificationType = "registry_change_" + expected;
+      const notificationType = "registry_change_" + registryDecision;
       const {data: existing} = await admin.from("fms_notifications").select("id")
         .eq("recipient_profile_id",requester.id).eq("related_table","fms_registry_change_requests")
         .eq("related_record_id",change.id).eq("notification_type",notificationType)
