@@ -13,3 +13,6 @@ verify_jwt = true
 verify_jwt = true
 [functions.bootstrap-admin]
 verify_jwt = true
+
+[functions.fms-system-health]
+verify_jwt = true
