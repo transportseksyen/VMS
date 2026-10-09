@@ -11,7 +11,7 @@ struct ContentView: UIViewControllerRepresentable {
 }
 
 final class FMSViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, UIDocumentPickerDelegate {
-    private let url = URL(string: "https://vehicle-management-system-311560.onhercules.app/")!
+    private let url = URL(string: "https://transportseksyen.github.io/VMS/")!
     private var webView: WKWebView!
     private var uploadCompletion: (([URL]?) -> Void)?
 
@@ -48,7 +48,8 @@ final class FMSViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
             return
         }
 
-        if host == "vehicle-management-system-311560.onhercules.app" ||
+        if host == "transportseksyen.github.io" ||
+           host == "vehicle-management-system-311560.onhercules.app" ||
            host.hasSuffix(".onhercules.app") ||
            host == "onxxgdbnonctwiykwdxo.supabase.co" {
             decisionHandler(.allow)
