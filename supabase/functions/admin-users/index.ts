@@ -156,8 +156,10 @@ Deno.serve(async (request: Request) => {
         if (!agency) return reply(400, { error: "Selected agency is not active" });
       }
       const now = new Date().toISOString();
+      const driverNeedsApproval = newRole === "driver" && (target.role !== "driver" || target.agency_id !== newAgencyId);
+      const newStatus = driverNeedsApproval ? "pending" : target.status;
       const { error: profileError } = await callerClient.from("fms_profiles")
-        .update({ role:newRole, agency_id:newAgencyId, updated_at:now }).eq("id",targetId);
+        .update({ role:newRole, agency_id:newAgencyId, status:newStatus, updated_at:now }).eq("id",targetId);
       if (profileError) return reply(400, { error: profileError.message });
 
       if (newRole === "driver") {
@@ -167,14 +169,14 @@ Deno.serve(async (request: Request) => {
           approved_by: null, approved_at: null, created_by: actor.id, updated_at: now
         }, { onConflict: "profile_id" });
         if (driverError) {
-          await callerClient.from("fms_profiles").update({ role:target.role, agency_id:target.agency_id, updated_at:new Date().toISOString() }).eq("id",targetId);
+          await callerClient.from("fms_profiles").update({ role:target.role, agency_id:target.agency_id, status:target.status, updated_at:new Date().toISOString() }).eq("id",targetId);
           return reply(500, { error: "Role update rolled back because the driver registry could not be synchronized" });
         }
       } else if (target.role === "driver") {
         const { error: driverError } = await callerClient.from("fms_drivers")
           .update({ account_status:"inactive", updated_at:now }).eq("profile_id",targetId);
         if (driverError) {
-          await callerClient.from("fms_profiles").update({ role:target.role, agency_id:target.agency_id, updated_at:new Date().toISOString() }).eq("id",targetId);
+          await callerClient.from("fms_profiles").update({ role:target.role, agency_id:target.agency_id, status:target.status, updated_at:new Date().toISOString() }).eq("id",targetId);
           return reply(500, { error: "Role update rolled back because the driver registry could not be synchronized" });
         }
       }
