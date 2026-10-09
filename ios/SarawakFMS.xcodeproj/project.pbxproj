@@ -82,7 +82,7 @@
       CODE_SIGNING_REQUIRED = NO;
       CURRENT_PROJECT_VERSION = 1;
       GENERATE_INFOPLIST_FILE = NO;
-      INFOPLIST_FILE = ios/SarawakFMS/Info.plist;
+      INFOPLIST_FILE = SarawakFMS/Info.plist;
       IPHONEOS_DEPLOYMENT_TARGET = 15.0;
       PRODUCT_BUNDLE_IDENTIFIER = my.gov.sarawak.fms;
       PRODUCT_NAME = "Sarawak FMS";
