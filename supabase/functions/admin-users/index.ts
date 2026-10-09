@@ -130,27 +130,96 @@ Deno.serve(async (request: Request) => {
       return reply(200, { success: true });
     }
 
+    if (action === "change_role_agency") {
+      if (actor.role !== "super_admin") return reply(403, { error: "Only a Super Admin can change a user's role or agency" });
+      const targetId = String(body.user_id || "");
+      const newRole = String(body.role || "");
+      const newAgencyId = body.agency_id ? String(body.agency_id) : null;
+      if (!targetId || !["super_admin","fleet_manager","data_entry","driver"].includes(newRole)) {
+        return reply(400, { error: "A valid user and role are required" });
+      }
+      if (targetId === actor.id) return reply(400, { error: "You cannot change your own role or agency" });
+      if (newRole === "super_admin" && newAgencyId) return reply(400, { error: "Super Admin accounts must not be assigned to a single agency" });
+      if (newRole !== "super_admin" && !newAgencyId) return reply(400, { error: "Select an active agency for this role" });
+      const { data: target, error: targetError } = await callerClient.from("fms_profiles")
+        .select("id,full_name,email,role,agency_id,status").eq("id", targetId).maybeSingle();
+      if (targetError || !target) return reply(404, { error: "User not found" });
+      if (target.role === "super_admin" && target.status === "active" && newRole !== "super_admin") {
+        const { count, error: countError } = await callerClient.from("fms_profiles")
+          .select("id", { count: "exact", head: true }).eq("role","super_admin").eq("status","active");
+        if (countError) return reply(503, { error: "Could not verify the remaining Super Admin accounts" });
+        if ((count || 0) <= 1) return reply(400, { error: "The last active Super Admin cannot be demoted" });
+      }
+      if (newAgencyId) {
+        const { data: agency } = await callerClient.from("fms_agencies")
+          .select("id").eq("id",newAgencyId).eq("is_active",true).maybeSingle();
+        if (!agency) return reply(400, { error: "Selected agency is not active" });
+      }
+      const now = new Date().toISOString();
+      const { error: profileError } = await callerClient.from("fms_profiles")
+        .update({ role:newRole, agency_id:newAgencyId, updated_at:now }).eq("id",targetId);
+      if (profileError) return reply(400, { error: profileError.message });
+
+      if (newRole === "driver") {
+        const { error: driverError } = await callerClient.from("fms_drivers").upsert({
+          profile_id: targetId, agency_id: newAgencyId, full_name: target.full_name, email: target.email,
+          account_status: "active", availability_status: "available", approval_status: "pending",
+          approved_by: null, approved_at: null, created_by: actor.id, updated_at: now
+        }, { onConflict: "profile_id" });
+        if (driverError) {
+          await callerClient.from("fms_profiles").update({ role:target.role, agency_id:target.agency_id, updated_at:new Date().toISOString() }).eq("id",targetId);
+          return reply(500, { error: "Role update rolled back because the driver registry could not be synchronized" });
+        }
+      } else if (target.role === "driver") {
+        const { error: driverError } = await callerClient.from("fms_drivers")
+          .update({ account_status:"inactive", updated_at:now }).eq("profile_id",targetId);
+        if (driverError) {
+          await callerClient.from("fms_profiles").update({ role:target.role, agency_id:target.agency_id, updated_at:new Date().toISOString() }).eq("id",targetId);
+          return reply(500, { error: "Role update rolled back because the driver registry could not be synchronized" });
+        }
+      }
+      await callerClient.from("fms_audit_logs").insert({
+        actor_profile_id:actor.id, agency_id:newAgencyId || target.agency_id,
+        action:"change_role_agency", entity_type:"profile", entity_id:targetId,
+        details:{previous_role:target.role,previous_agency_id:target.agency_id,new_role:newRole,new_agency_id:newAgencyId}
+      });
+      return reply(200, { success:true });
+    }
+
     if (action === "suspend" || action === "activate") {
       const targetId = String(body.user_id || "");
-      const { data: target } = await callerClient.from("fms_profiles").select("id,role,agency_id").eq("id", targetId).maybeSingle();
+      const { data: target } = await callerClient.from("fms_profiles")
+        .select("id,role,agency_id,status").eq("id", targetId).maybeSingle();
       if (!target) return reply(404, { error: "User not found" });
+      if (targetId === actor.id) return reply(400, { error: "You cannot suspend or reactivate your own account" });
       if (actor.role === "fleet_manager" && (target.agency_id !== actor.agency_id || !["data_entry","driver"].includes(target.role))) {
         return reply(403, { error: "Fleet Managers may change only Data Entry or Driver accounts in their agency" });
       }
       if (target.role === "super_admin" && actor.role !== "super_admin") return reply(403, { error: "Only a Super Admin can change a Super Admin account" });
+      if (action === "suspend" && target.status !== "active") return reply(400, { error: "Only an active account can be suspended" });
+      if (action === "activate" && target.status !== "suspended") return reply(400, { error: "Only a suspended account can be reactivated. Pending accounts must be approved first." });
+      if (action === "suspend" && target.role === "super_admin" && target.status === "active") {
+        const { count, error: countError } = await callerClient.from("fms_profiles")
+          .select("id", { count:"exact", head:true }).eq("role","super_admin").eq("status","active");
+        if (countError) return reply(503, { error:"Could not verify remaining Super Admin accounts" });
+        if ((count || 0) <= 1) return reply(400, { error:"The last active Super Admin cannot be suspended" });
+      }
       const status = action === "suspend" ? "suspended" : "active";
-      const { error: updateError } = await callerClient.from("fms_profiles").update({ status, updated_at: new Date().toISOString() }).eq("id", targetId);
+      const { error: updateError } = await callerClient.from("fms_profiles")
+        .update({ status, updated_at: new Date().toISOString() }).eq("id", targetId);
       if (updateError) return reply(400, { error: updateError.message });
-      if (action === "suspend") {
-        await callerClient.auth.admin.updateUserById(targetId, { ban_duration: "876000h" });
-      } else {
-        await callerClient.auth.admin.updateUserById(targetId, { ban_duration: "none" });
+      const { error: authUpdateError } = action === "suspend"
+        ? await callerClient.auth.admin.updateUserById(targetId, { ban_duration:"876000h" })
+        : await callerClient.auth.admin.updateUserById(targetId, { ban_duration:"none" });
+      if (authUpdateError) {
+        await callerClient.from("fms_profiles").update({ status:target.status, updated_at:new Date().toISOString() }).eq("id",targetId);
+        return reply(500, { error:"Account status could not be synchronized with authentication. The profile update was rolled back." });
       }
       await callerClient.from("fms_audit_logs").insert({
-        actor_profile_id: actor.id, agency_id: target.agency_id,
-        action: action + "_user", entity_type: "profile", entity_id: targetId
+        actor_profile_id:actor.id, agency_id:target.agency_id,
+        action:action + "_user", entity_type:"profile", entity_id:targetId
       });
-      return reply(200, { success: true });
+      return reply(200, { success:true });
     }
     return reply(400, { error: "Unsupported action" });
   } catch (error) {
