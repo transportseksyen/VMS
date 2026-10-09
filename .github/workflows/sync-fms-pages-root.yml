@@ -1,0 +1,54 @@
+name: Publish FMS web build to Pages branch root
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/sync-fms-pages-root.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fms-pages-root-sync
+  cancel-in-progress: true
+
+jobs:
+  build-and-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        working-directory: web
+        run: npm install
+      - name: Build FMS web
+        working-directory: web
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: https://onxxgdbnonctwiykwdxo.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_VPJ_qVVMLV8ov0EWaA0opw_V90mFdFs
+      - name: Copy built site to Pages branch root
+        run: |
+          rm -rf assets
+          cp -a web/dist/. .
+          touch .nojekyll
+      - name: Commit generated site for branch-based Pages fallback
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html assets .nojekyll
+          if git diff --cached --quiet; then
+            echo "Generated FMS site is already up to date."
+          else
+            git commit -m "chore: publish generated FMS Pages assets"
+            git push
+          fi
