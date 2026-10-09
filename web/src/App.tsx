@@ -38,7 +38,8 @@ export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileMissing, setProfileMissing] = useState(false);
   const [view, setView] = useState<View>('dashboard');
-  const [authMode, setAuthMode] = useState<'login' | 'apply'>('apply');
+  const [authMode, setAuthMode] = useState<'login' | 'apply' | 'track'>('apply');
+  const [trackedApplication, setTrackedApplication] = useState<Row | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [agencies, setAgencies] = useState<Row[]>([]);
@@ -186,6 +187,23 @@ export default function App() {
     if (!supabase) return;
     await supabase.auth.signOut();
     setProfile(null); setSession(null); setView('dashboard'); setAuthMode('apply');
+  }
+
+  async function trackApplication(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!supabase) return;
+    const fd = new FormData(event.currentTarget);
+    const reference = String(fd.get('reference') || '').trim().toUpperCase();
+    const email = String(fd.get('email') || '').trim();
+    setBusy(true); setError(''); setNotice(''); setTrackedApplication(null);
+    const { data, error: trackError } = await supabase.functions.invoke('application-status', { body: { reference, email } });
+    if (trackError || data?.error || !data?.application) {
+      setError(data?.error || trackError?.message || 'Application status could not be retrieved.');
+    } else {
+      setTrackedApplication(data.application as Row);
+      setNotice('Application status retrieved.');
+    }
+    setBusy(false);
   }
 
   async function submitApplication(event: FormEvent<HTMLFormElement>) {
@@ -607,6 +625,19 @@ export default function App() {
                 </form>
                 <button className="link-button" onClick={() => setAuthMode('apply')}>Submit a vehicle request without login</button>
               </>
+            ) : authMode === 'track' ? (
+              <>
+                <div className="card-kicker">APPLICATION TRACKING</div><h2>Check your application</h2><p className="muted">Enter the application reference and the same email address used when submitting the request.</p>
+                <form className="form-stack" onSubmit={trackApplication}>
+                  <label>Application reference *<input name="reference" required maxLength={12} placeholder="FMS-XXXXXXXX" autoCapitalize="characters" /></label>
+                  <label>Applicant email *<input name="email" type="email" required autoComplete="email" /></label>
+                  {error && <div className="alert alert-error">{error}</div>}
+                  {notice && <div className="alert alert-success">{notice}</div>}
+                  {trackedApplication && <div className="tracking-result"><div><small>Application reference</small><strong>{trackedApplication.reference}</strong></div><div><small>Current status</small><span className={'status-pill ' + String(trackedApplication.status || '').replaceAll('_','-')}>{statusText(trackedApplication.status)}</span></div><div><small>Destination</small><strong>{trackedApplication.destination}</strong></div><div><small>Travel dates</small><strong>{dateText(trackedApplication.start_date)} – {dateText(trackedApplication.end_date)}</strong></div><div><small>Vehicles requested</small><strong>{trackedApplication.vehicles_requested}</strong></div>{trackedApplication.decision_reason && <div><small>Remarks</small><p>{trackedApplication.decision_reason}</p></div>}</div>}
+                  <button className="btn btn-primary btn-wide" disabled={busy}>{busy ? 'Checking…' : 'Check application status'}</button>
+                </form>
+                <button className="link-button" onClick={() => { setAuthMode('apply'); setTrackedApplication(null); setError(''); setNotice(''); }}>Submit another vehicle request</button>
+              </>
             ) : (
               <>
                 <div className="card-kicker">PUBLIC VEHICLE PORTAL</div><h2>Request a vehicle</h2><p className="muted">Submit your trip details and attach one combined PDF letter/memo and itinerary.</p>
@@ -627,6 +658,7 @@ export default function App() {
                   <button className="btn btn-primary btn-wide" disabled={busy}>{busy ? 'Submitting…' : 'Submit vehicle request'} <span>→</span></button>
                   <p className="privacy-note">Your application document is stored privately. Do not upload unrelated personal or confidential material.</p>
                 </form>
+                <button className="link-button" onClick={() => { setAuthMode('track'); setError(''); setNotice(''); setTrackedApplication(null); }}>Already applied? Check status</button>
                 <button className="link-button" onClick={() => { setAuthMode('login'); setError(''); setNotice(''); }}>Staff login</button>
               </>
             )}
