@@ -15,7 +15,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 public class MainActivity extends Activity {
-    private static final String FMS_URL = "https://vehicle-management-system-311560.onhercules.app/";
+    private static final String FMS_URL = "https://transportseksyen.github.io/VMS/";
     private WebView webView;
     private ValueCallback<Uri[]> uploadCallback;
     private static final int FILE_CHOOSER_REQUEST = 1001;
@@ -48,7 +48,7 @@ public class MainActivity extends Activity {
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
                 String host = uri.getHost();
-                if (host != null && host.endsWith("onhercules.app")) {
+                if (host != null && (host.endsWith("onhercules.app") || host.equals("transportseksyen.github.io") || host.endsWith(".supabase.co"))) {
                     view.loadUrl(uri.toString());
                     return true;
                 }
