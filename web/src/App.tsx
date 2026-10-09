@@ -78,6 +78,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!supabase || !profile || profile.role !== 'driver') {
+      setDriverWhatsAppOptIn(false);
+      return;
+    }
+    let cancelled = false;
+    void supabase.from('fms_drivers').select('whatsapp_opt_in').eq('profile_id', profile.id).maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setDriverWhatsAppOptIn(Boolean(data?.whatsapp_opt_in));
+      });
+    return () => { cancelled = true; };
+  }, [profile]);
+
+  useEffect(() => {
     if (supabase && profile && view === 'fuel' && profile.role === 'driver') {
       void (async () => {
         const { data: driverRow } = await supabase.from('fms_drivers').select('id').eq('profile_id', profile.id).maybeSingle();
