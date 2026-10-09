@@ -96,19 +96,160 @@ Deno.serve(async (request: Request) => {
     const applicationId = String(body?.application_id || "");
     const assignmentId = String(body?.assignment_id || "");
     const fuelTransactionId = String(body?.fuel_transaction_id || "");
-    const { data: actor } = await admin.from("fms_profiles").select("id,role,agency_id,status").eq("id", authData.user.id).maybeSingle();
+    const registryEntityId = String(body?.entity_id || "");
+    const changeRequestId = String(body?.change_request_id || "");
+    const registryEntityType = String(body?.entity_type || "");
+    const registryDecision = String(body?.decision || "");
+    const { data: actor } = await admin.from("fms_profiles").select("id,full_name,email,role,agency_id,status").eq("id", authData.user.id).maybeSingle();
     if (!actor || actor.status !== "active") return reply(403, { error: "An active FMS account is required" });
     const isSubmissionNotice = type === "assignment-submitted";
     const isFuelSubmission = type === "fuel-submitted";
+    const isRegistrySubmission = type === "registry-record-submitted" || type === "registry-change-submitted";
+    const isRegistryReview = type === "registry-record-reviewed" || type === "registry-change-reviewed";
     if (isSubmissionNotice) {
       if (!["data_entry","fleet_manager","super_admin"].includes(actor.role)) return reply(403, { error: "Only authorized fleet staff may submit assignments for review" });
     } else if (isFuelSubmission) {
       if (actor.role !== "driver") return reply(403, { error: "Only the assigned driver may notify reviewers about a fuel submission" });
+    } else if (isRegistrySubmission) {
+      if (!["data_entry","fleet_manager","super_admin"].includes(actor.role)) return reply(403, { error: "Only authorized fleet staff may submit registry records for review" });
+    } else if (isRegistryReview) {
+      if (!["fleet_manager","super_admin"].includes(actor.role)) return reply(403, { error: "Only a Fleet Manager or Super Admin can send registry review notifications" });
     } else if (!["fleet_manager","super_admin"].includes(actor.role)) {
       return reply(403, { error: "Only authorized Fleet Managers can send decision notifications" });
     }
     const fuelDecision = type === "fuel-approved" || type === "fuel-returned";
-    if (!["assignment-approved","assignment-rejected","assignment-returned","assignment-cancelled","assignment-submitted","fuel-approved","fuel-returned","fuel-submitted"].includes(type)) return reply(400, { error: "Unsupported notification type" });
+    if (!["assignment-approved","assignment-rejected","assignment-returned","assignment-cancelled","assignment-submitted","fuel-approved","fuel-returned","fuel-submitted","registry-record-submitted","registry-record-reviewed","registry-change-submitted","registry-change-reviewed"].includes(type)) return reply(400, { error: "Unsupported notification type" });
+
+    if (type === "registry-record-submitted" || type === "registry-record-reviewed") {
+      if (!registryEntityId || !["vehicle","driver"].includes(registryEntityType)) return reply(400,{error:"Registry entity type and ID are required"});
+      const table = registryEntityType === "vehicle" ? "fms_vehicles" : "fms_drivers";
+      const {data: record,error: recordError} = await admin.from(table).select("*").eq("id",registryEntityId).maybeSingle();
+      if (recordError || !record) return reply(404,{error:"Registry record not found"});
+      if (actor.role !== "super_admin" && actor.agency_id !== record.agency_id) return reply(403,{error:"Agency access denied"});
+
+      if (type === "registry-record-submitted") {
+        if (record.approval_status !== "pending") return reply(409,{error:"Registry record is not pending review"});
+        const {data: reviewers,error: reviewerError} = await admin.from("fms_profiles")
+          .select("id,full_name,email,role,agency_id").eq("status","active").in("role",["fleet_manager","super_admin"]);
+        if (reviewerError) return reply(503,{error:"Registry reviewers could not be checked"});
+        const recipients = (reviewers || []).filter((person: Record<string,any>) =>
+          person.role === "super_admin" || person.agency_id === record.agency_id
+        );
+        const label = registryEntityType === "vehicle"
+          ? String(record.brand || "") + " " + String(record.model || "") + " (" + String(record.plate_number || "") + ")"
+          : String(record.full_name || record.email || "Driver");
+        const subject = "FMS " + (registryEntityType === "vehicle" ? "vehicle" : "driver") + " requires approval — " + label;
+        const statuses = await Promise.all(recipients.filter((person: Record<string,any>) => person.id !== actor.id).map(async (person: Record<string,any>) => {
+          const result = await sendEmail(String(person.email || ""),subject,
+            "<p>Dear " + esc(person.full_name || "Fleet Manager") + ",</p><p>A " + esc(registryEntityType) + " registration has been submitted or resubmitted and awaits review.</p><p><strong>Record:</strong> " + esc(label) + "<br><strong>Submitted by:</strong> " + esc(actor.full_name || actor.email) + "</p><p>Sign in to FMS to approve, reject or return the record.</p><p>Fleet Management System — Sarawak</p>");
+          await admin.from("fms_notifications").insert({
+            recipient_profile_id:person.id,recipient_email:person.email,subject,
+            body:"Registry record awaiting review: " + label,
+            notification_type:"registry_record_pending_review",related_table:table,related_record_id:record.id,
+            email_status:result.status,email_error:result.error ? String(result.error).slice(0,1000) : null,
+            sent_at:result.status === "sent" ? new Date().toISOString() : null
+          });
+          return {recipient:person.email,status:result.status};
+        }));
+        return reply(200,{success:true,recipients:statuses.length,statuses});
+      }
+
+      const expected = registryDecision === "approve" ? "approved" : registryDecision === "reject" ? "rejected" : registryDecision === "return" ? "returned" : "";
+      if (!expected || record.approval_status !== expected) return reply(409,{error:"Registry status does not match the review decision"});
+      const {data: audit,error: auditError} = await admin.from("fms_audit_logs").select("id")
+        .eq("actor_profile_id",actor.id).eq("action","registry_" + registryDecision)
+        .eq("entity_type",registryEntityType).eq("entity_id",registryEntityId).order("created_at",{ascending:false}).limit(1).maybeSingle();
+      if (auditError || !audit) return reply(403,{error:"A matching registry decision audit event was not found"});
+      const recipients: Array<{profileId:string|null;email:string;name:string}> = [];
+      if (record.created_by) {
+        const {data: creator} = await admin.from("fms_profiles").select("id,full_name,email").eq("id",record.created_by).maybeSingle();
+        if (creator?.email) recipients.push({profileId:creator.id,email:creator.email,name:creator.full_name || "Fleet staff"});
+      }
+      if (registryEntityType === "driver" && record.email) {
+        recipients.push({profileId:record.profile_id || null,email:record.email,name:record.full_name || "Driver"});
+      }
+      const uniqueRecipients = Array.from(new Map(recipients.map(person => [person.email.toLowerCase(),person])).values());
+      const label = registryEntityType === "vehicle"
+        ? String(record.brand || "") + " " + String(record.model || "") + " (" + String(record.plate_number || "") + ")"
+        : String(record.full_name || record.email || "Driver");
+      const decisionLabel = expected === "approved" ? "approved" : expected === "rejected" ? "rejected" : "returned for correction";
+      const subject = "FMS " + registryEntityType + " registration " + decisionLabel + " — " + label;
+      const statuses = await Promise.all(uniqueRecipients.map(async person => {
+        const result = await sendEmail(person.email,subject,
+          "<p>Dear " + esc(person.name) + ",</p><p>The " + esc(registryEntityType) + " registration <strong>" + esc(label) + "</strong> was " + decisionLabel + ".</p>" +
+          (record.decision_reason ? "<p><strong>Reason / instructions:</strong> " + esc(record.decision_reason) + "</p>" : "") +
+          "<p>Fleet Management System — Sarawak</p>");
+        await admin.from("fms_notifications").insert({
+          recipient_profile_id:person.profileId,recipient_email:person.email,subject,
+          body:subject + (record.decision_reason ? ". " + String(record.decision_reason) : ""),
+          notification_type:"registry_record_" + expected,related_table:table,related_record_id:record.id,
+          email_status:result.status,email_error:result.error ? String(result.error).slice(0,1000) : null,
+          sent_at:result.status === "sent" ? new Date().toISOString() : null
+        });
+        return {recipient:person.email,status:result.status};
+      }));
+      return reply(200,{success:true,emailStatus:statuses.some(item => item.status === "failed") ? "failed" : statuses.some(item => item.status === "not_configured") ? "not_configured" : "sent",statuses});
+    }
+
+    if (type === "registry-change-submitted" || type === "registry-change-reviewed") {
+      if (!changeRequestId) return reply(400,{error:"Registry change request ID is required"});
+      const {data: change,error: changeError} = await admin.from("fms_registry_change_requests").select("*").eq("id",changeRequestId).maybeSingle();
+      if (changeError || !change) return reply(404,{error:"Registry change request not found"});
+      if (actor.role !== "super_admin" && actor.agency_id !== change.agency_id) return reply(403,{error:"Agency access denied"});
+      const entityLabel = String(change.entity_type || "registry") + " " + String(change.entity_id || "").slice(0,8);
+      if (type === "registry-change-submitted") {
+        if (change.status !== "pending" || change.submitted_by !== actor.id) return reply(409,{error:"Only the owner can notify reviewers about a pending change request"});
+        const {data: prior} = await admin.from("fms_notifications").select("id").eq("related_table","fms_registry_change_requests").eq("related_record_id",change.id).eq("notification_type","registry_change_pending_review").limit(1);
+        if (prior?.length) return reply(200,{success:true,already_notified:true,recipients:0,statuses:[]});
+        const {data: reviewers,error: reviewerError} = await admin.from("fms_profiles")
+          .select("id,full_name,email,role,agency_id").eq("status","active").in("role",["fleet_manager","super_admin"]);
+        if (reviewerError) return reply(503,{error:"Registry reviewers could not be checked"});
+        const recipients = (reviewers || []).filter((person: Record<string,any>) => person.role === "super_admin" || person.agency_id === change.agency_id);
+        const subject = "FMS registry change requires approval — " + entityLabel;
+        const statuses = await Promise.all(recipients.filter((person: Record<string,any>) => person.id !== actor.id).map(async (person: Record<string,any>) => {
+          const result = await sendEmail(String(person.email || ""),subject,
+            "<p>Dear " + esc(person.full_name || "Fleet Manager") + ",</p><p>A change to an approved " + esc(change.entity_type) + " record is awaiting review.</p><p><strong>Proposed changes:</strong> " + esc(JSON.stringify(change.proposed_changes)) + "<br><strong>Reason:</strong> " + esc(change.reason) + "</p><p>Sign in to FMS to approve, reject or return this request.</p><p>Fleet Management System — Sarawak</p>");
+          await admin.from("fms_notifications").insert({
+            recipient_profile_id:person.id,recipient_email:person.email,subject,
+            body:subject + ": " + String(change.reason || ""),
+            notification_type:"registry_change_pending_review",related_table:"fms_registry_change_requests",related_record_id:change.id,
+            email_status:result.status,email_error:result.error ? String(result.error).slice(0,1000) : null,
+            sent_at:result.status === "sent" ? new Date().toISOString() : null
+          });
+          return {recipient:person.email,status:result.status};
+        }));
+        return reply(200,{success:true,recipients:statuses.length,statuses});
+      }
+
+      const expected = registryDecision === "approve" ? "approved" : registryDecision === "reject" ? "rejected" : registryDecision === "return" ? "returned" : "";
+      if (!expected || change.status !== expected) return reply(409,{error:"Registry change status does not match the review decision"});
+      const {data: audit,error: auditError} = await admin.from("fms_audit_logs").select("id")
+        .eq("actor_profile_id",actor.id).eq("action","registry_change_" + registryDecision)
+        .eq("entity_type",change.entity_type).eq("entity_id",change.entity_id).order("created_at",{ascending:false}).limit(1).maybeSingle();
+      if (auditError || !audit) return reply(403,{error:"A matching registry change audit event was not found"});
+      const {data: requester} = await admin.from("fms_profiles").select("id,full_name,email").eq("id",change.submitted_by).maybeSingle();
+      if (!requester?.email) return reply(404,{error:"Change request submitter email not found"});
+      const label = "FMS " + change.entity_type + " change " + expected;
+      const subject = label + " — " + entityLabel;
+      const result = await sendEmail(requester.email,subject,
+        "<p>Dear " + esc(requester.full_name || "FMS user") + ",</p><p>Your proposed change to <strong>" + esc(entityLabel) + "</strong> was " + expected + ".</p>" +
+        (change.decision_reason ? "<p><strong>Reason / instructions:</strong> " + esc(change.decision_reason) + "</p>" : "") +
+        "<p>Fleet Management System — Sarawak</p>");
+      const notificationType = "registry_change_" + expected;
+      const {data: existing} = await admin.from("fms_notifications").select("id")
+        .eq("recipient_profile_id",requester.id).eq("related_table","fms_registry_change_requests")
+        .eq("related_record_id",change.id).eq("notification_type",notificationType)
+        .order("created_at",{ascending:false}).limit(1).maybeSingle();
+      const notificationRow = {
+        recipient_profile_id:requester.id,recipient_email:requester.email,subject,body:subject + (change.decision_reason ? ". " + String(change.decision_reason) : ""),
+        notification_type:notificationType,related_table:"fms_registry_change_requests",related_record_id:change.id,
+        email_status:result.status,email_error:result.error ? String(result.error).slice(0,1000) : null,
+        sent_at:result.status === "sent" ? new Date().toISOString() : null
+      };
+      if (existing?.id) await admin.from("fms_notifications").update(notificationRow).eq("id",existing.id);
+      else await admin.from("fms_notifications").insert(notificationRow);
+      return reply(200,{success:true,emailStatus:result.status});
+    }
 
     if (isFuelSubmission) {
       if (!fuelTransactionId) return reply(400, { error: "Fuel transaction ID is required" });
