@@ -273,3 +273,35 @@ td:first-child { color: #253a56; font-weight: 700; }
 }
 
 .success-text { color: #287250; background: #e7f6ee; border: 1px solid #ccead9; border-radius: 8px; padding: 10px 12px; font-size: 11px; line-height: 1.5; }
+
+.calendar-panel { margin-top: 18px; }
+.calendar-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 16px; }
+.calendar-header h2 { color: #223550; font-size: 16px; margin: 5px 0; }
+.calendar-header p { color: #8793a3; font-size: 10px; margin: 0; }
+.calendar-controls { display: flex; align-items: center; gap: 10px; }
+.calendar-controls strong { font-size: 11px; color: #4a5e78; min-width: 115px; text-align: center; }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0,1fr)); gap: 5px; }
+.calendar-weekday { padding: 8px 4px; text-align: center; color: #8693a4; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+.calendar-day, .calendar-blank { min-height: 61px; border-radius: 8px; border: 1px solid #edf0f5; background: #fbfcfe; padding: 8px; }
+.calendar-day { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; color: #5f7086; font-size: 11px; }
+.calendar-day.has-trips { background: #edf4fc; border-color: #c4d6ee; color: #214c80; }
+.calendar-day small { background: #244f83; color: #fff; font-size: 8px; font-weight: 700; padding: 4px 5px; border-radius: 5px; }
+.calendar-blank { background: transparent; border-color: transparent; }
+.calendar-legend { display: flex; justify-content: space-between; gap: 12px; margin-top: 13px; color: #8793a3; font-size: 9px; }
+.calendar-legend span:first-child { display: inline-flex; align-items: center; gap: 7px; }
+.calendar-legend i { display: inline-block; width: 7px; height: 7px; background: #244f83; border-radius: 50%; }
+.fuel-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-bottom: 18px; }
+.fuel-summary-card { display: flex; flex-direction: column; padding: 15px 17px; border: 1px solid #e5eaf0; border-radius: 12px; background: #fff; gap: 5px; }
+.fuel-summary-card small { color: #92743a; font-size: 9px; font-weight: 800; letter-spacing: .05em; }
+.fuel-summary-card span { color: #8290a2; font-size: 10px; }
+.fuel-summary-card strong { color: #203550; font-size: 22px; letter-spacing: -.04em; margin-top: 5px; overflow-wrap: anywhere; }
+.doc-buttons, .action-pair { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+@media (max-width: 520px) {
+  .calendar-header { display: block; }
+  .calendar-controls { justify-content: space-between; margin-top: 13px; }
+  .calendar-day, .calendar-blank { min-height: 48px; padding: 5px; }
+  .calendar-day small { font-size: 7px; padding: 3px; }
+  .calendar-legend { display: block; line-height: 1.8; }
+  .fuel-summary { grid-template-columns: 1fr; }
+  .fuel-summary-card { padding: 12px 14px; }
+}
