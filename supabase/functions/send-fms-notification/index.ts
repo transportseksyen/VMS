@@ -142,6 +142,7 @@ Deno.serve(async (request: Request) => {
     });
 
     let driverStatus = "not_applicable";
+    let driverWhatsAppStatus = "not_applicable";
     if (driver?.email && assignmentId) {
       const driverSubject = isApproved
         ? "FMS trip assignment confirmed — " + application.reference
@@ -159,6 +160,7 @@ Deno.serve(async (request: Request) => {
         ? await sendWhatsApp(driver.phone, application.reference, driverMessage, "Travel dates: " + application.start_date + " to " + application.end_date)
         : { status: "not_opted_in", error: null };
       driverStatus = result.status;
+      driverWhatsAppStatus = driverWhatsApp.status;
       await admin.from("fms_notifications").insert({
         recipient_email: driver.email, subject: driverSubject,
         body: driverMessage + " Reference: " + application.reference,
@@ -171,7 +173,7 @@ Deno.serve(async (request: Request) => {
         whatsapp_sent_at: driverWhatsApp.status === "sent" ? new Date().toISOString() : null
       });
     }
-    return reply(200, { success: true, applicantEmailStatus: applicantResult.status, applicantWhatsAppStatus: applicantWhatsApp.status, driverEmailStatus: driverStatus, driverWhatsAppStatus: driver?.whatsapp_opt_in ? "configured_or_failed" : "not_opted_in" });
+    return reply(200, { success: true, applicantEmailStatus: applicantResult.status, applicantWhatsAppStatus: applicantWhatsApp.status, driverEmailStatus: driverStatus, driverWhatsAppStatus });
   } catch (error) {
     console.error("send-fms-notification", error);
     return reply(500, { error: "An unexpected notification error occurred" });
