@@ -5,7 +5,7 @@ import { supabase, supabaseConfigured } from './lib/supabase';
 type Role = 'super_admin' | 'fleet_manager' | 'data_entry' | 'driver';
 type Row = Record<string, any>;
 type Profile = { id: string; full_name: string; role: Role; agency_id: string | null; status: string };
-type View = 'dashboard' | 'applications' | 'vehicles' | 'drivers' | 'assignments' | 'fuel' | 'maintenance' | 'users' | 'availability' | 'reports' | 'agencies' | 'notifications' | 'audit_logs' | 'settings';
+type View = 'dashboard' | 'applications' | 'vehicles' | 'drivers' | 'assignments' | 'fuel' | 'maintenance' | 'users' | 'availability' | 'reports' | 'agencies' | 'notifications' | 'audit_logs' | 'change_requests' | 'settings';
 
 const roleTitles: Record<Role, string> = {
   super_admin: 'Super Admin',
@@ -17,17 +17,17 @@ const titleByView: Record<View, string> = {
   dashboard: 'Dashboard', agencies: 'Agencies', applications: 'Applications', vehicles: 'Vehicles',
   drivers: 'Drivers', assignments: 'Assignment Monitoring', fuel: 'Monthly Fuel Analysis',
   maintenance: 'Maintenance', users: 'User Management', availability: 'My Availability',
-  reports: 'Reports', notifications: 'Notifications', audit_logs: 'Audit Logs', settings: 'System Settings'
+  reports: 'Reports', notifications: 'Notifications', audit_logs: 'Audit Logs', change_requests: 'Registry Change Requests', settings: 'System Settings'
 };
 const navByRole: Record<Role, View[]> = {
-  super_admin: ['dashboard', 'agencies', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications', 'audit_logs', 'users', 'settings'],
-  fleet_manager: ['dashboard', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications', 'audit_logs', 'users'],
-  data_entry: ['dashboard', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications'],
+  super_admin: ['dashboard', 'agencies', 'applications', 'vehicles', 'drivers', 'change_requests', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications', 'audit_logs', 'users', 'settings'],
+  fleet_manager: ['dashboard', 'applications', 'vehicles', 'drivers', 'change_requests', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications', 'audit_logs', 'users'],
+  data_entry: ['dashboard', 'applications', 'vehicles', 'drivers', 'change_requests', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications'],
   driver: ['dashboard', 'assignments', 'vehicles', 'drivers', 'fuel', 'availability', 'notifications']
 };
 const tableByView: Partial<Record<View, string>> = {
   agencies: 'fms_agencies', applications: 'fms_applications', vehicles: 'fms_vehicles', drivers: 'fms_drivers',
-  assignments: 'fms_assignments', fuel: 'fms_fuel_transactions', maintenance: 'fms_maintenance_records', users: 'fms_profiles', notifications: 'fms_notifications', audit_logs: 'fms_audit_logs'
+  assignments: 'fms_assignments', fuel: 'fms_fuel_transactions', maintenance: 'fms_maintenance_records', users: 'fms_profiles', notifications: 'fms_notifications', audit_logs: 'fms_audit_logs', change_requests: 'fms_registry_change_requests'
 };
 const statusText = (s: string) => (s || '—').replaceAll('_', ' ').replace(/\b\w/g, m => m.toUpperCase());
 const dateText = (v: string) => { if (!v) return '—'; const raw = v.slice(0, 10); const [year, month, day] = raw.split('-'); return year && month && day ? day + '/' + month + '/' + year : v; };
@@ -49,6 +49,7 @@ export default function App() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [selectedApp, setSelectedApp] = useState<Row | null>(null);
+  const [registryEdit, setRegistryEdit] = useState<{kind:'vehicles'|'drivers';row:Row} | null>(null);
   const [vehicles, setVehicles] = useState<Row[]>([]);
   const [drivers, setDrivers] = useState<Row[]>([]);
   const [fuelVehicles, setFuelVehicles] = useState<Row[]>([]);
@@ -1076,7 +1077,7 @@ function SystemSettings({ health, loading, error, onRefresh }: { health: Row | n
   </div>;
 }
 
-function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, onCancel, onDocument, onReturn, agencies = [], currentUserId, onStatus, onRoleAgency, onMaintenanceReview, busy = false }: { rows: Row[]; kind: string; loading: boolean; role: Role; onAssign?: (r: Row) => void; onApprove?: (r: Row) => void; onReject?: (r: Row) => void; onCancel?: (r: Row) => void; onDocument?: (path: string) => void; onReturn?: (r: Row) => void; agencies?: Row[]; currentUserId?: string; onStatus?: (r: Row, action: 'suspend' | 'activate') => void; onRoleAgency?: (r: Row, event: FormEvent<HTMLFormElement>) => void; onMaintenanceReview?: (r: Row, decision: 'approve' | 'reject' | 'complete') => void; busy?: boolean }) {
+function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, onCancel, onDocument, onReturn, agencies = [], currentUserId, onStatus, onRoleAgency, onMaintenanceReview, busy = false }: { rows: Row[]; kind: string; loading: boolean; role: Role; onAssign?: (r: Row) => void; onApprove?: (r: Row) => void; onReject?: (r: Row) => void; onCancel?: (r: Row) => void; onDocument?: (path: string) => void; onReturn?: (r: Row) => void; agencies?: Row[]; currentUserId?: string; onStatus?: (r: Row, action: 'suspend' | 'activate') => void; onRoleAgency?: (r: Row, event: FormEvent<HTMLFormElement>) => void; onMaintenanceReview?: (r: Row, decision: 'approve' | 'reject' | 'complete') => void; onEditRegistry?: (kind: 'vehicles' | 'drivers', row: Row) => void; onReviewRegistryRecord?: (kind: 'vehicles' | 'drivers', row: Row, decision: 'approve' | 'reject' | 'return') => void; onReviewRegistryChange?: (row: Row, decision: 'approve' | 'reject' | 'return') => void; busy?: boolean }) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
   const [sortBy, setSortBy] = useState('');
@@ -1093,6 +1094,7 @@ function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, o
     fuel: [{key:'reporting_month',label:'Month'},{key:'purchase_date',label:'Purchase date'},{key:'odometer_reading',label:'Odometer'},{key:'litres',label:'Litres'},{key:'amount_rm',label:'Cost (RM)'},{key:'price_per_litre',label:'RM / L'},{key:'receipt_path',label:'Receipt'},{key:'status',label:'Status'}],
     maintenance: [{key:'vehicle',label:'Vehicle'},{key:'category',label:'Category'},{key:'description',label:'Description'},{key:'date_reported',label:'Reported'},{key:'workshop',label:'Workshop'},{key:'odometer_reading',label:'Odometer'},{key:'service_date',label:'Service date'},{key:'next_service_due',label:'Next service'},{key:'estimated_cost_rm',label:'Estimated RM'},{key:'actual_cost_rm',label:'Actual RM'},{key:'documents',label:'Documents'},{key:'status',label:'Status'}],
     users: [{key:'full_name',label:'Name'},{key:'role',label:'Role'},{key:'agency_id',label:'Agency ID'},{key:'status',label:'Account'}],
+     change_requests: [{key:'entity_type',label:'Record type'},{key:'entity_id',label:'Record ID'},{key:'proposed_changes',label:'Proposed changes'},{key:'reason',label:'Reason'},{key:'status',label:'Status'},{key:'decision_reason',label:'Decision / correction'},{key:'created_at',label:'Submitted'}],
     notifications: [{key:'created_at',label:'Recorded'},{key:'subject',label:'Notification'},{key:'notification_type',label:'Type'},{key:'email_status',label:'Email'},{key:'whatsapp_status',label:'WhatsApp'},{key:'sent_at',label:'Email sent'}],
     audit_logs: [{key:'created_at',label:'Date / time'},{key:'action',label:'Action'},{key:'entity_type',label:'Record type'},{key:'entity_id',label:'Record ID'},{key:'actor_profile_id',label:'Actor profile'},{key:'details',label:'Details'}]
   };
@@ -1111,7 +1113,7 @@ function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, o
     const v = row[key];
     if (['start_date','end_date','purchase_date','date_reported','insurance_expiry','road_tax_expiry','inspection_date','next_service_due','service_date'].includes(key)) return dateText(v);
     if (['created_at','sent_at'].includes(key)) return dateTimeText(v);
-    if (key === 'details') return v && typeof v === 'object' ? JSON.stringify(v).slice(0, 260) : v ? String(v).slice(0,260) : '—';
+    if (key === 'details' || key === 'proposed_changes') return v && typeof v === 'object' ? JSON.stringify(v).slice(0, 320) : v ? String(v).slice(0,320) : '—';
     if (key === 'email_error' || key === 'whatsapp_error') return v ? String(v).slice(0, 160) : '—';
     if (key === 'amount_rm' || key === 'estimated_cost_rm' || key === 'actual_cost_rm') return v == null ? '—' : moneyText(v);
     if (key === 'role') return roleTitles[v as Role] || statusText(v);
