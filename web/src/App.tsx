@@ -175,7 +175,17 @@ export default function App() {
     }
     const { data, error: queryError } = await query.order('created_at', { ascending: false }).limit(100);
     if (queryError) setError(queryError.message);
-    setRows(data || []);
+    let loadedRows: Row[] = (data || []) as Row[];
+    if (target === 'vehicles' && profile?.role !== 'driver' && loadedRows.length) {
+      const { data: vehicleDocs, error: vehicleDocsError } = await supabase.from('fms_vehicle_documents')
+        .select('id,vehicle_id,document_type,file_path,original_file_name').in('vehicle_id', loadedRows.map(row => row.id));
+      if (vehicleDocsError) setError(vehicleDocsError.message);
+      loadedRows = loadedRows.map(vehicle => ({
+        ...vehicle,
+        documents: (vehicleDocs || []).filter((doc: Row) => doc.vehicle_id === vehicle.id)
+      }));
+    }
+    setRows(loadedRows);
     setLoading(false);
   }
 
@@ -384,16 +394,57 @@ export default function App() {
     const form = event.currentTarget;
     if (!supabase || !profile?.agency_id) return;
     const fd = new FormData(form);
+    const vehicleId = crypto.randomUUID();
+    const docTypes = [
+      ['insurance_doc','insurance'], ['road_tax_doc','road_tax'], ['inspection_doc','inspection'], ['registration_doc','registration']
+    ] as const;
+    const docs = docTypes.map(([field,type]) => ({type,file:fd.get(field) as File | null}))
+      .filter(item => item.file && item.file.size > 0) as Array<{type:string;file:File}>;
+    for (const item of docs) {
+      if (item.file.size > 5 * 1024 * 1024 || !['application/pdf','image/jpeg','image/png'].includes(item.file.type)) {
+        setError('Vehicle documents must be PDF, JPG or PNG files no larger than 5 MB each.');
+        return;
+      }
+    }
     const record = {
-      agency_id: profile.agency_id, brand: String(fd.get('brand') || '').trim(),
+      id: vehicleId, agency_id: profile.agency_id,
+      brand: String(fd.get('brand') || '').trim(),
       model: String(fd.get('model') || '').trim(), vehicle_type: String(fd.get('vehicle_type') || ''),
       plate_number: String(fd.get('plate_number') || '').trim().toUpperCase(),
       seat_capacity: Number(fd.get('seat_capacity') || 1), vehicle_status: 'active',
+      mileage_km: Number(fd.get('mileage_km') || 0),
+      insurance_expiry: String(fd.get('insurance_expiry') || '') || null,
+      road_tax_expiry: String(fd.get('road_tax_expiry') || '') || null,
+      inspection_date: String(fd.get('inspection_date') || '') || null,
+      next_service_due: String(fd.get('next_service_due') || '') || null,
+      remarks: String(fd.get('remarks') || '').trim() || null,
       approval_status: 'pending', created_by: profile.id
     };
+    setBusy(true); setError(''); setNotice('');
     const { error: saveError } = await supabase.from('fms_vehicles').insert(record);
-    if (saveError) setError(saveError.message);
-    else { setNotice('Vehicle saved and submitted for approval.'); await loadRows('vehicles'); form.reset(); }
+    if (saveError) {
+      setError(saveError.message); setBusy(false); return;
+    }
+    for (const item of docs) {
+      const safeName = item.file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = profile.agency_id + '/vehicles/' + vehicleId + '/' + item.type + '-' + crypto.randomUUID() + '-' + safeName;
+      const { error: uploadError } = await supabase.storage.from('fms-documents').upload(path, item.file, {contentType:item.file.type,upsert:false});
+      if (uploadError) {
+        setError('Vehicle saved for approval, but document upload failed: ' + uploadError.message);
+        setBusy(false); await loadRows('vehicles'); return;
+      }
+      const { error: metadataError } = await supabase.from('fms_vehicle_documents').insert({
+        vehicle_id:vehicleId,agency_id:profile.agency_id,document_type:item.type,
+        file_path:path,original_file_name:item.file.name,uploaded_by:profile.id
+      });
+      if (metadataError) {
+        setError('Vehicle saved for approval, but document metadata could not be recorded: ' + metadataError.message);
+        setBusy(false); await loadRows('vehicles'); return;
+      }
+    }
+    setNotice('Vehicle and ' + docs.length + ' supporting document(s) saved for Fleet Manager approval.');
+    await Promise.all([loadRows('vehicles'),loadCounts()]);
+    form.reset(); setBusy(false);
   }
 
   async function saveDriver(event: FormEvent<HTMLFormElement>) {
@@ -766,7 +817,7 @@ export default function App() {
           {error && <div className="alert alert-error dismissible">{error}<button onClick={() => setError('')}>×</button></div>}
           {view === 'dashboard' && <Dashboard profile={profile} counts={counts} onNavigate={setView} />}
           {view === 'applications' && <section className="panel"><PanelHeading title="Vehicle applications" subtitle="Review requirements, submit every requested vehicle assignment, then approve or return the complete request." /><DataTable rows={rows} kind="applications" loading={loading} role={profile.role} onAssign={beginAssignment} onApprove={r => void decideApplication(r, 'approve')} onReject={r => void decideApplication(r, 'reject')} onReturn={r => void decideApplication(r, 'return')} onDocument={path => void openDocument(path)} /><div className="panel-foot">A request is confirmed only when the Fleet Manager approves all requested vehicles together.</div></section>}
-          {view === 'vehicles' && <><section className="panel"><PanelHeading title="Vehicle registry" subtitle="Approved vehicle records are eligible for assignments." />{loading ? <Loading /> : <DataTable rows={rows} kind="vehicles" loading={loading} role={profile.role} onApprove={r => void approveRegistryRecord('vehicles', r)} />}</section>{canEditRegistry && <section className="panel form-panel"><PanelHeading title="Register a vehicle" subtitle="New and changed records are submitted for Fleet Manager approval." /><form className="form-grid" onSubmit={saveVehicle}><label>Brand *<input name="brand" required /></label><label>Model *<input name="model" required /></label><label>Vehicle type *<select name="vehicle_type" required><option value="">Choose type</option><option>Sedan</option><option>SUV</option><option>MPV</option><option>Van</option><option>4x4 / Pickup</option><option>Bus</option><option>Other</option></select></label><label>Registration number *<input name="plate_number" required /></label><label>Seat capacity *<input name="seat_capacity" type="number" min="1" max="100" defaultValue="5" required /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Submit for approval</button></div></form></section>}</>}
+          {view === 'vehicles' && <><section className="panel"><PanelHeading title="Vehicle registry" subtitle="Approved vehicle records are eligible for assignments." />{loading ? <Loading /> : <DataTable rows={rows} kind="vehicles" loading={loading} role={profile.role} onApprove={r => void approveRegistryRecord('vehicles', r)} />}</section>{canEditRegistry && <section className="panel form-panel"><PanelHeading title="Register a vehicle" subtitle="New and changed records are submitted for Fleet Manager approval." /><form className="form-grid" onSubmit={saveVehicle}><label>Brand *<input name="brand" required /></label><label>Model *<input name="model" required /></label><label>Vehicle type *<select name="vehicle_type" required><option value="">Choose type</option><option>Sedan</option><option>SUV</option><option>MPV</option><option>Van</option><option>4x4 / Pickup</option><option>Bus</option><option>Other</option></select></label><label>Registration number *<input name="plate_number" required /></label><label>Seat capacity *<input name="seat_capacity" type="number" min="1" max="100" defaultValue="5" required /></label><label>Mileage / odometer (km) *<input name="mileage_km" type="number" min="0" step="0.1" defaultValue="0" required /></label><label>Insurance expiry<input name="insurance_expiry" type="date" /></label><label>Road tax expiry<input name="road_tax_expiry" type="date" /></label><label>Inspection date<input name="inspection_date" type="date" /></label><label>Next service due<input name="next_service_due" type="date" /></label><label>Insurance document (PDF/JPG/PNG)<input name="insurance_doc" type="file" accept=".pdf,image/jpeg,image/png,application/pdf" /></label><label>Road tax document (PDF/JPG/PNG)<input name="road_tax_doc" type="file" accept=".pdf,image/jpeg,image/png,application/pdf" /></label><label>Inspection document (PDF/JPG/PNG)<input name="inspection_doc" type="file" accept=".pdf,image/jpeg,image/png,application/pdf" /></label><label>Registration document (PDF/JPG/PNG)<input name="registration_doc" type="file" accept=".pdf,image/jpeg,image/png,application/pdf" /></label><label className="full-width">Remarks<textarea name="remarks" rows={2} /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Submit vehicle and documents for approval</button></div></form></section>}</>}
           {view === 'drivers' && <><section className="panel"><PanelHeading title="Driver directory" subtitle="Driver records require Fleet Manager approval before assignment." />{loading ? <Loading /> : <DataTable rows={rows} kind="drivers" loading={loading} role={profile.role} onApprove={r => void approveRegistryRecord('drivers', r)} />}</section>{canEditRegistry && <section className="panel form-panel"><PanelHeading title="Register a driver" subtitle="Emergency contact details are restricted to authorized staff." /><form className="form-grid" onSubmit={saveDriver}><label>Driver name *<input name="full_name" required /></label><label>Email address *<input name="email" type="email" required /></label><label>Phone number *<input name="phone" required /></label><label>Emergency contact name<input name="emergency_contact_name" /></label><label>Emergency contact phone<input name="emergency_contact_phone" /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Submit for approval</button></div></form></section>}</>}
           {view === 'assignments' && <section className="panel"><PanelHeading title="Assignment monitoring" subtitle="Confirmed trips are created only after Fleet Manager approval." /><AssignmentCalendar rows={rows} /><DataTable rows={rows} kind="assignments" loading={loading} role={profile.role} onCancel={r => void decideAssignment(r, 'cancel')} /><div className="panel-foot">Date conflicts must be checked by the database approval function before an assignment can become confirmed.</div></section>}
           {view === 'fuel' && <><section className="panel"><PanelHeading title="Fuel transactions" subtitle="Drivers submit a receipt for each purchase. Monthly totals are calculated from saved transactions." />{loading ? <Loading /> : <><FuelSummary rows={rows} /><DataTable rows={rows} kind="fuel" loading={loading} role={profile.role} onApprove={r => void reviewFuel(r, 'approved')} onReject={r => void reviewFuel(r, 'returned')} onDocument={path => void openDocument(path)} /></>}</section>{isDriver && <section className="panel form-panel"><PanelHeading title="Submit a fuel transaction" subtitle="Upload a readable receipt photo or PDF. Maximum file size: 5 MB." /><form className="form-grid" onSubmit={saveFuel}><label>Vehicle *<select name="vehicle_id" required defaultValue=""><option value="" disabled>Select vehicle</option>{fuelVehicles.map(v => <option value={v.id} key={v.id}>{v.plate_number} · {v.brand} {v.model}</option>)}</select></label><label>Reporting month *<input name="reporting_month" type="month" required /></label><label>Purchase date *<input name="purchase_date" type="date" required /></label><label>Odometer (km) *<input name="odometer_reading" type="number" min="0" required /></label><label>Litres *<input name="litres" type="number" min="0.01" step="0.01" required /></label><label>Total cost (RM) *<input name="amount_rm" type="number" min="0.01" step="0.01" required /></label><label className="full-width">Receipt *<input name="receipt" type="file" accept="image/*,.pdf,application/pdf" required /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Submit fuel transaction</button></div></form></section>}</>}
@@ -830,7 +881,7 @@ function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, o
   const columns: Record<string, {key:string;label:string}[]> = {
     agencies: [{key:'name',label:'Agency name'},{key:'code',label:'Code'},{key:'is_active',label:'Status'}],
     applications: [{key:'reference',label:'Reference'},{key:'applicant_name',label:'Applicant'},{key:'applicant_agency_name',label:'Organization'},{key:'destination',label:'Destination'},{key:'purpose',label:'Purpose'},{key:'passenger_count',label:'Passengers'},{key:'vehicles_requested',label:'Vehicles'},{key:'start_date',label:'Start'},{key:'end_date',label:'End'},{key:'document_path',label:'PDF'},{key:'status',label:'Status'}],
-    vehicles: [{key:'brand',label:'Brand'},{key:'model',label:'Model'},{key:'vehicle_type',label:'Type'},{key:'plate_number',label:'Registration'},{key:'approval_status',label:'Approval'},{key:'vehicle_status',label:'Status'}],
+    vehicles: [{key:'brand',label:'Brand'},{key:'model',label:'Model'},{key:'vehicle_type',label:'Type'},{key:'plate_number',label:'Registration'},{key:'seat_capacity',label:'Seats'},{key:'mileage_km',label:'Mileage (km)'},{key:'insurance_expiry',label:'Insurance expiry'},{key:'road_tax_expiry',label:'Road tax expiry'},{key:'inspection_date',label:'Inspection'},{key:'next_service_due',label:'Next service'},{key:'documents',label:'Documents'},{key:'approval_status',label:'Approval'},{key:'vehicle_status',label:'Status'}],
     drivers: [{key:'full_name',label:'Driver'},{key:'email',label:'Email'},{key:'phone',label:'Phone'},{key:'availability_status',label:'Availability'},{key:'approval_status',label:'Approval'}],
     driverDirectory: [{key:'full_name',label:'Driver'},{key:'availability_status',label:'Availability'},{key:'approval_status',label:'Approval'},{key:'account_status',label:'Account'}],
     assignments: [{key:'application',label:'Request'},{key:'vehicle',label:'Vehicle'},{key:'driver',label:'Driver'},{key:'start_date',label:'Start'},{key:'end_date',label:'End'},{key:'status',label:'Status'}],
@@ -850,7 +901,7 @@ function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, o
     if (key === 'is_active') return row.is_active ? 'Active' : 'Inactive';
     if (key === 'documents') return (row.documents || []).length ? row.documents.length + ' file(s)' : '—';
     const v = row[key];
-    if (['start_date','end_date','purchase_date','date_reported'].includes(key)) return dateText(v);
+    if (['start_date','end_date','purchase_date','date_reported','insurance_expiry','road_tax_expiry','inspection_date','next_service_due','service_date'].includes(key)) return dateText(v);
     if (['created_at','sent_at'].includes(key)) return dateTimeText(v);
     if (['email_error','whatsapp_error'].includes(key)) return v ? String(v).slice(0, 160) : '—';
     if (key === 'amount_rm') return moneyText(v);
