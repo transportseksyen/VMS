@@ -1138,6 +1138,30 @@ export default function App() {
         </div>
         <footer className="main-footer"><span>FMS · Fleet Management System</span><span>Authorized access only</span><span>Sarawak · Malaysia</span><span>Built &amp; Powered by Seksyen Pengangkutan Residen Sibu</span></footer>
       </main>
+      {registryEdit && <div className="modal-backdrop" role="presentation"><section className="modal registry-edit-modal" role="dialog" aria-modal="true" aria-labelledby="registry-edit-title"><button type="button" className="modal-close" onClick={() => setRegistryEdit(null)} aria-label="Close">×</button><div className="card-kicker">{registryEdit.row.approval_status === 'approved' ? 'CONTROLLED CHANGE REQUEST' : 'CORRECT AND RESUBMIT'}</div><h2 id="registry-edit-title">{registryEdit.kind === 'vehicles' ? 'Edit vehicle record' : 'Edit driver record'}</h2><p className="muted">{registryEdit.row.approval_status === 'approved' ? 'Changes will stay pending until approved by an authorized reviewer.' : 'Your corrections will be resubmitted for Fleet Manager approval.'}</p><form key={registryEdit.row.id} className="form-grid" onSubmit={submitRegistryEdit}>
+        {registryEdit.kind === 'vehicles' ? <>
+          <label>Brand *<input name="brand" defaultValue={registryEdit.row.brand || ''} required maxLength={120} /></label>
+          <label>Model *<input name="model" defaultValue={registryEdit.row.model || ''} required maxLength={120} /></label>
+          <label>Vehicle type *<input name="vehicle_type" defaultValue={registryEdit.row.vehicle_type || ''} required maxLength={80} /></label>
+          <label>Registration number *<input name="plate_number" defaultValue={registryEdit.row.plate_number || ''} required maxLength={30} /></label>
+          <label>Seat capacity *<input name="seat_capacity" type="number" min="1" max="100" defaultValue={registryEdit.row.seat_capacity ?? 5} required /></label>
+          <label>Mileage / odometer (km) *<input name="mileage_km" type="number" min="0" step="0.1" defaultValue={registryEdit.row.mileage_km ?? 0} required /></label>
+          <label>Insurance expiry<input name="insurance_expiry" type="date" defaultValue={registryEdit.row.insurance_expiry || ''} /></label>
+          <label>Road tax expiry<input name="road_tax_expiry" type="date" defaultValue={registryEdit.row.road_tax_expiry || ''} /></label>
+          <label>Inspection date<input name="inspection_date" type="date" defaultValue={registryEdit.row.inspection_date || ''} /></label>
+          <label>Next service due<input name="next_service_due" type="date" defaultValue={registryEdit.row.next_service_due || ''} /></label>
+          <label className="full-width">Remarks<textarea name="remarks" rows={2} defaultValue={registryEdit.row.remarks || ''} /></label>
+        </> : <>
+          <label>Driver name *<input name="full_name" defaultValue={registryEdit.row.full_name || ''} required maxLength={150} /></label>
+          <label>Email address *<input name="email" type="email" defaultValue={registryEdit.row.email || ''} required /></label>
+          <label>Phone number<input name="phone" defaultValue={registryEdit.row.phone || ''} maxLength={40} /></label>
+          <label>Emergency contact name<input name="emergency_contact_name" defaultValue={registryEdit.row.emergency_contact_name || ''} maxLength={150} /></label>
+          <label>Emergency contact phone<input name="emergency_contact_phone" defaultValue={registryEdit.row.emergency_contact_phone || ''} maxLength={40} /></label>
+        </>}
+        <label className="full-width">Reason for change / correction *<textarea name="change_reason" rows={3} minLength={3} maxLength={1500} required placeholder="Explain why the record needs to be changed." /></label>
+        {error && <div className="alert alert-error full-width">{error}</div>}
+        <div className="form-action"><button type="button" className="btn btn-outline" onClick={() => setRegistryEdit(null)} disabled={busy}>Cancel</button><button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : registryEdit.row.approval_status === 'approved' ? 'Submit change for approval' : 'Save and resubmit'}</button></div>
+      </form></section></div>}
       {selectedApp && <div className="modal-backdrop" role="presentation"><section className="modal" role="dialog" aria-modal="true"><button className="modal-close" onClick={() => setSelectedApp(null)}>×</button><div className="card-kicker">PROPOSED ASSIGNMENT</div><h2>{selectedApp.reference || selectedApp.id.slice(0,8).toUpperCase()}</h2><p className="muted">{selectedApp.applicant_name} · {selectedApp.destination}</p><div className="trip-date-box"><span>{dateText(selectedApp.start_date)}</span><b>→</b><span>{dateText(selectedApp.end_date)}</span></div><form className="form-stack" onSubmit={createAssignment}><label>Vehicle *<select name="vehicle_id" required defaultValue=""><option value="" disabled>Select approved available vehicle</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.plate_number} · {v.brand} {v.model} · {v.seat_capacity} seats</option>)}</select></label><label>Driver *<select name="driver_id" required defaultValue=""><option value="" disabled>Select approved driver</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.full_name} · {d.email}</option>)}</select></label>{vehicles.length === 0 && <p className="alert alert-error">No approved vehicles are available in this agency.</p>}{drivers.length === 0 && <p className="alert alert-error">No approved drivers are available in this agency.</p>}<button className="btn btn-primary btn-wide" disabled={busy || !vehicles.length || !drivers.length}>Submit for Fleet Manager approval</button></form></section></div>}
     </div>
   );
