@@ -42,22 +42,22 @@ Deno.serve(async (request: Request) => {
     const type = String(body?.type || "");
     const applicationId = String(body?.application_id || "");
     const assignmentId = String(body?.assignment_id || "");
-    const { data: actor } = await admin.from("profiles").select("id,role,agency_id,status").eq("id", authData.user.id).maybeSingle();
+    const { data: actor } = await admin.from("fms_profiles").select("id,role,agency_id,status").eq("id", authData.user.id).maybeSingle();
     if (!actor || actor.status !== "active" || !["fleet_manager","super_admin"].includes(actor.role)) return reply(403, { error: "Only authorized Fleet Managers can send decision notifications" });
     if (!["assignment-approved","assignment-rejected","assignment-cancelled"].includes(type)) return reply(400, { error: "Unsupported notification type" });
 
-    const { data: application } = await admin.from("applications").select("*").eq("id", applicationId).maybeSingle();
+    const { data: application } = await admin.from("fms_applications").select("*").eq("id", applicationId).maybeSingle();
     if (!application) return reply(404, { error: "Application not found" });
     if (actor.role !== "super_admin" && actor.agency_id !== application.agency_id) return reply(403, { error: "Agency access denied" });
 
     let driver: Record<string, any> | null = null;
     let vehicle: Record<string, any> | null = null;
     if (assignmentId) {
-      const { data: assignment } = await admin.from("assignments").select("id,application_id,driver_id,vehicle_id,status,start_date,end_date").eq("id", assignmentId).eq("application_id", applicationId).maybeSingle();
+      const { data: assignment } = await admin.from("fms_assignments").select("id,application_id,driver_id,vehicle_id,status,start_date,end_date").eq("id", assignmentId).eq("application_id", applicationId).maybeSingle();
       if (assignment) {
         const [driverResult, vehicleResult] = await Promise.all([
-          admin.from("drivers").select("full_name,email,phone").eq("id", assignment.driver_id).maybeSingle(),
-          admin.from("vehicles").select("brand,model,plate_number").eq("id", assignment.vehicle_id).maybeSingle()
+          admin.from("fms_drivers").select("full_name,email,phone").eq("id", assignment.driver_id).maybeSingle(),
+          admin.from("fms_vehicles").select("brand,model,plate_number").eq("id", assignment.vehicle_id).maybeSingle()
         ]);
         driver = driverResult.data;
         vehicle = vehicleResult.data;
@@ -74,9 +74,9 @@ Deno.serve(async (request: Request) => {
     const reason = body.reason ? "<p><strong>Remarks:</strong> " + esc(body.reason) + "</p>" : "";
     const applicantResult = await sendEmail(application.email, subject,
       "<p>Dear " + esc(application.applicant_name) + ",</p><p>Your FMS vehicle request <strong>" + esc(application.reference) + "</strong> has been " + (isApproved ? "approved" : type === "assignment-rejected" ? "rejected" : "cancelled") + ".</p>" + details + reason + "<p>Fleet Management System — Sarawak</p>");
-    await admin.from("notifications").insert({
+    await admin.from("fms_notifications").insert({
       recipient_email: application.email, subject, body: subject + " " + (body.reason || ""),
-      notification_type: type, related_table: "applications", related_record_id: application.id,
+      notification_type: type, related_table: "fms_applications", related_record_id: application.id,
       email_status: applicantResult.status, email_error: applicantResult.error ? String(applicantResult.error).slice(0,1000) : null,
       sent_at: applicantResult.status === "sent" ? new Date().toISOString() : null
     });
@@ -86,10 +86,10 @@ Deno.serve(async (request: Request) => {
       const result = await sendEmail(driver.email, "FMS trip assignment — " + application.reference,
         "<p>Dear " + esc(driver.full_name) + ",</p><p>You have a confirmed vehicle assignment.</p>" + details + "<p>Reference: " + esc(application.reference) + "</p><p>Fleet Management System — Sarawak</p>");
       driverStatus = result.status;
-      await admin.from("notifications").insert({
+      await admin.from("fms_notifications").insert({
         recipient_email: driver.email, subject: "FMS trip assignment — " + application.reference,
         body: "Confirmed assignment for " + application.reference,
-        notification_type: "driver_assignment", related_table: "assignments", related_record_id: assignmentId || null,
+        notification_type: "driver_assignment", related_table: "fms_assignments", related_record_id: assignmentId || null,
         email_status: result.status, email_error: result.error ? String(result.error).slice(0,1000) : null,
         sent_at: result.status === "sent" ? new Date().toISOString() : null
       });
