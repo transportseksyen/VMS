@@ -68,7 +68,7 @@ Deno.serve(async (request: Request) => {
     const subject = isApproved ? "FMS vehicle request approved — " + application.reference
       : type === "assignment-rejected" ? "FMS vehicle request decision — " + application.reference
       : "FMS assignment cancelled — " + application.reference;
-    const details = isApproved && vehicle && driver
+    const details = vehicle && driver
       ? "<p><strong>Driver:</strong> " + esc(driver.full_name) + "<br><strong>Vehicle:</strong> " + esc(vehicle.brand) + " " + esc(vehicle.model) + " (" + esc(vehicle.plate_number) + ")<br><strong>Travel dates:</strong> " + esc(application.start_date) + " to " + esc(application.end_date) + "</p>"
       : "";
     const reason = body.reason ? "<p><strong>Remarks:</strong> " + esc(body.reason) + "</p>" : "";
@@ -82,14 +82,25 @@ Deno.serve(async (request: Request) => {
     });
 
     let driverStatus = "not_applicable";
-    if (isApproved && driver?.email) {
-      const result = await sendEmail(driver.email, "FMS trip assignment — " + application.reference,
-        "<p>Dear " + esc(driver.full_name) + ",</p><p>You have a confirmed vehicle assignment.</p>" + details + "<p>Reference: " + esc(application.reference) + "</p><p>Fleet Management System — Sarawak</p>");
+    if (driver?.email && assignmentId) {
+      const driverSubject = isApproved
+        ? "FMS trip assignment confirmed — " + application.reference
+        : type === "assignment-rejected"
+          ? "FMS proposed trip not approved — " + application.reference
+          : "FMS trip assignment cancelled — " + application.reference;
+      const driverMessage = isApproved
+        ? "Your vehicle assignment has been approved."
+        : type === "assignment-rejected"
+          ? "The proposed trip assignment was not approved. Please review the remarks below with your Fleet Manager."
+          : "The trip assignment has been cancelled. Please review the remarks below with your Fleet Manager.";
+      const result = await sendEmail(driver.email, driverSubject,
+        "<p>Dear " + esc(driver.full_name) + ",</p><p>" + driverMessage + "</p>" + details + reason + "<p>Reference: " + esc(application.reference) + "</p><p>Fleet Management System — Sarawak</p>");
       driverStatus = result.status;
       await admin.from("fms_notifications").insert({
-        recipient_email: driver.email, subject: "FMS trip assignment — " + application.reference,
-        body: "Confirmed assignment for " + application.reference,
-        notification_type: "driver_assignment", related_table: "fms_assignments", related_record_id: assignmentId || null,
+        recipient_email: driver.email, subject: driverSubject,
+        body: driverMessage + " Reference: " + application.reference,
+        notification_type: type === "assignment-approved" ? "driver_assignment" : type === "assignment-rejected" ? "driver_assignment_rejected" : "driver_assignment_cancelled",
+        related_table: "fms_assignments", related_record_id: assignmentId,
         email_status: result.status, email_error: result.error ? String(result.error).slice(0,1000) : null,
         sent_at: result.status === "sent" ? new Date().toISOString() : null
       });
