@@ -5,7 +5,7 @@ import { supabase, supabaseConfigured } from './lib/supabase';
 type Role = 'super_admin' | 'fleet_manager' | 'data_entry' | 'driver';
 type Row = Record<string, any>;
 type Profile = { id: string; full_name: string; role: Role; agency_id: string | null; status: string };
-type View = 'dashboard' | 'applications' | 'vehicles' | 'drivers' | 'assignments' | 'fuel' | 'maintenance' | 'users' | 'availability' | 'reports' | 'agencies';
+type View = 'dashboard' | 'applications' | 'vehicles' | 'drivers' | 'assignments' | 'fuel' | 'maintenance' | 'users' | 'availability' | 'reports' | 'agencies' | 'notifications';
 
 const roleTitles: Record<Role, string> = {
   super_admin: 'Super Admin',
@@ -17,21 +17,22 @@ const titleByView: Record<View, string> = {
   dashboard: 'Dashboard', agencies: 'Agencies', applications: 'Applications', vehicles: 'Vehicles',
   drivers: 'Drivers', assignments: 'Assignment Monitoring', fuel: 'Monthly Fuel Analysis',
   maintenance: 'Maintenance', users: 'User Management', availability: 'My Availability',
-  reports: 'Reports'
+  reports: 'Reports', notifications: 'Notifications'
 };
 const navByRole: Record<Role, View[]> = {
-  super_admin: ['dashboard', 'agencies', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'users'],
-  fleet_manager: ['dashboard', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'users'],
-  data_entry: ['dashboard', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports'],
-  driver: ['dashboard', 'assignments', 'vehicles', 'drivers', 'fuel', 'availability']
+  super_admin: ['dashboard', 'agencies', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications', 'users'],
+  fleet_manager: ['dashboard', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications', 'users'],
+  data_entry: ['dashboard', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications'],
+  driver: ['dashboard', 'assignments', 'vehicles', 'drivers', 'fuel', 'availability', 'notifications']
 };
 const tableByView: Partial<Record<View, string>> = {
   agencies: 'fms_agencies', applications: 'fms_applications', vehicles: 'fms_vehicles', drivers: 'fms_drivers',
-  assignments: 'fms_assignments', fuel: 'fms_fuel_transactions', maintenance: 'fms_maintenance_records', users: 'fms_profiles'
+  assignments: 'fms_assignments', fuel: 'fms_fuel_transactions', maintenance: 'fms_maintenance_records', users: 'fms_profiles', notifications: 'fms_notifications'
 };
 const statusText = (s: string) => (s || '—').replaceAll('_', ' ').replace(/\b\w/g, m => m.toUpperCase());
 const dateText = (v: string) => { if (!v) return '—'; const raw = v.slice(0, 10); const [year, month, day] = raw.split('-'); return year && month && day ? day + '/' + month + '/' + year : v; };
 const moneyText = (v: number) => new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(Number(v || 0));
+const dateTimeText = (v: string) => v ? new Intl.DateTimeFormat('en-MY', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Kuching' }).format(new Date(v)) : '—';
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -733,6 +734,7 @@ export default function App() {
           {view === 'availability' && <section className="panel form-panel"><PanelHeading title="My availability" subtitle="Update your expected leave, course or unavailability period." /><form className="form-grid" onSubmit={setAvailability}><label>Status *<select name="availability_status" required value={driverAvailability.status} onChange={e => setDriverAvailabilityState(prev => ({ ...prev, status: e.target.value }))}><option value="available">Available</option><option value="on_leave">On leave</option><option value="on_course">On course</option><option value="unavailable">Unavailable</option></select></label><label>Start date<input name="availability_start" type="date" value={driverAvailability.start} onChange={e => setDriverAvailabilityState(prev => ({ ...prev, start: e.target.value }))} /></label><label>End date<input name="availability_end" type="date" min={driverAvailability.start || undefined} value={driverAvailability.end} onChange={e => setDriverAvailabilityState(prev => ({ ...prev, end: e.target.value }))} /></label><label className="check-label full-width"><input type="checkbox" name="whatsapp_opt_in" checked={driverWhatsAppOptIn} onChange={e => setDriverWhatsAppOptIn(e.target.checked)} /> <span>I agree to receive trip assignment, rejection and cancellation updates from FMS Sarawak by WhatsApp on my registered phone number.</span></label><label className="full-width">Remarks<textarea name="availability_remarks" rows={3} value={driverAvailability.remarks} onChange={e => setDriverAvailabilityState(prev => ({ ...prev, remarks: e.target.value }))} /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Update availability'}</button></div></form></section>}
           {view === 'agencies' && profile.role === 'super_admin' && <><section className="panel"><PanelHeading title="Agency registry" subtitle="Create and manage the agencies served by FMS." /><DataTable rows={rows} kind="agencies" loading={loading} role={profile.role} onApprove={r => void toggleAgency(r)} /></section><section className="panel form-panel"><PanelHeading title="Register an agency" subtitle="Only active agencies appear in the public vehicle request form." /><form className="form-grid" onSubmit={createAgency}><label>Agency name *<input name="name" required maxLength={180} /></label><label>Agency code<input name="code" maxLength={16} placeholder="Example: SIBU-TR" /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Create agency</button></div></form></section></>}{view === 'users' && <><section className="panel"><PanelHeading title="Staff directory" subtitle="View accounts visible within your authorized scope." /><DataTable rows={rows} kind="users" loading={loading} role={profile.role} onApprove={r => void approveStaff(r)} /></section><section className="panel form-panel"><PanelHeading title="Invite a staff user" subtitle="An invitation email will be sent. Role and agency permissions are validated server-side." /><form className="form-grid" onSubmit={inviteUser}><label>Full name *<input name="full_name" required /></label><label>Email address *<input name="email" type="email" required /></label><label>Role *<select name="role" required defaultValue=""><option value="" disabled>Select role</option>{(profile.role === 'super_admin' ? ['super_admin','fleet_manager','data_entry','driver'] : ['data_entry','driver']).map(r => <option key={r} value={r}>{roleTitles[r as Role]}</option>)}</select></label><label>Agency *<select name="agency_id" required defaultValue=""><option value="" disabled>Select agency</option>{agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Send invitation</button></div></form><div className="panel-foot">Super Admin can appoint Fleet Managers to any active agency. Fleet Managers can invite Data Entry and Drivers for their own agency only.</div></section></>}
           {view === 'reports' && <Reports counts={counts} />}
+          {view === 'notifications' && <section className="panel"><PanelHeading title="Notifications" subtitle={profile.role === 'super_admin' ? 'System-wide delivery history, provider responses and errors.' : 'Your FMS notification history. Delivery is only reported as successful when the provider confirms it.'} /><DataTable rows={rows} kind="notifications" loading={loading} role={profile.role} /></section>}
         </div>
         <footer className="main-footer"><span>FMS · Fleet Management System</span><span>Authorized access only</span><span>Sarawak · Malaysia</span></footer>
       </main>
@@ -745,7 +747,7 @@ function vehiclesForFuel(rows: Row[], agencyId: string | null) {
   return rows.filter(r => r.agency_id === agencyId && r.approval_status === 'approved');
 }
 function glyphFor(view: View) {
-  const glyphs: Record<View, string> = { dashboard:'▦', agencies:'⌂', applications:'▤', vehicles:'▰', drivers:'♙', assignments:'⇄', fuel:'◉', maintenance:'⌁', users:'♧', availability:'◷', reports:'▥' };
+  const glyphs: Record<View, string> = { dashboard:'▦', agencies:'⌂', applications:'▤', vehicles:'▰', drivers:'♙', assignments:'⇄', fuel:'◉', maintenance:'⌁', users:'♧', availability:'◷', reports:'▥', notifications:'✉' };
   return glyphs[view];
 }
 function welcomeLine(view: View, role: Role) {
@@ -794,9 +796,13 @@ function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, o
     assignments: [{key:'application',label:'Request'},{key:'vehicle',label:'Vehicle'},{key:'driver',label:'Driver'},{key:'start_date',label:'Start'},{key:'end_date',label:'End'},{key:'status',label:'Status'}],
     fuel: [{key:'reporting_month',label:'Month'},{key:'purchase_date',label:'Purchase date'},{key:'odometer_reading',label:'Odometer'},{key:'litres',label:'Litres'},{key:'amount_rm',label:'Cost (RM)'},{key:'receipt_path',label:'Receipt'},{key:'status',label:'Status'}],
     maintenance: [{key:'vehicle_id',label:'Vehicle ID'},{key:'category',label:'Category'},{key:'description',label:'Description'},{key:'date_reported',label:'Reported'},{key:'documents',label:'Documents'},{key:'status',label:'Status'}],
-    users: [{key:'full_name',label:'Name'},{key:'role',label:'Role'},{key:'agency_id',label:'Agency ID'},{key:'status',label:'Account'}]
+    users: [{key:'full_name',label:'Name'},{key:'role',label:'Role'},{key:'agency_id',label:'Agency ID'},{key:'status',label:'Account'}],
+    notifications: [{key:'created_at',label:'Recorded'},{key:'subject',label:'Notification'},{key:'notification_type',label:'Type'},{key:'email_status',label:'Email'},{key:'whatsapp_status',label:'WhatsApp'},{key:'sent_at',label:'Email sent'}]
   };
-  const cols = kind === 'drivers' && role === 'driver' ? columns.driverDirectory : (columns[kind] || []);
+  const cols = kind === 'drivers' && role === 'driver' ? columns.driverDirectory
+    : kind === 'notifications' && role === 'super_admin'
+      ? [...columns.notifications, {key:'email_error',label:'Email error'}, {key:'whatsapp_error',label:'WhatsApp error'}]
+      : (columns[kind] || []);
   function value(row: Row, key: string) {
     if (key === 'application') return row.applications?.reference || row.application_id?.slice(0,8) || '—';
     if (key === 'vehicle') return row.vehicles ? row.vehicles.plate_number + ' · ' + row.vehicles.brand + ' ' + row.vehicles.model : row.vehicle_id?.slice(0,8) || '—';
@@ -805,6 +811,8 @@ function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, o
     if (key === 'documents') return (row.documents || []).length ? row.documents.length + ' file(s)' : '—';
     const v = row[key];
     if (['start_date','end_date','purchase_date','date_reported'].includes(key)) return dateText(v);
+    if (['created_at','sent_at'].includes(key)) return dateTimeText(v);
+    if (['email_error','whatsapp_error'].includes(key)) return v ? String(v).slice(0, 160) : '—';
     if (key === 'amount_rm') return moneyText(v);
     if (key === 'role') return roleTitles[v as Role] || statusText(v);
     return v === null || v === undefined || v === '' ? '—' : String(v);
