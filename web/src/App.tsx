@@ -52,6 +52,7 @@ export default function App() {
   const [vehicles, setVehicles] = useState<Row[]>([]);
   const [drivers, setDrivers] = useState<Row[]>([]);
   const [fuelVehicles, setFuelVehicles] = useState<Row[]>([]);
+  const [maintenanceVehicles, setMaintenanceVehicles] = useState<Row[]>([]);
   const [driverWhatsAppOptIn, setDriverWhatsAppOptIn] = useState(false);
   const [driverAvailability, setDriverAvailabilityState] = useState({ status: 'available', start: '', end: '', remarks: '' });
 
@@ -112,6 +113,14 @@ export default function App() {
         setFuelVehicles(Array.from(unique.values()));
       })();
     }
+    if (supabase && profile && view === 'maintenance' && ['data_entry','fleet_manager','super_admin'].includes(profile.role)) {
+      void supabase.from('fms_vehicles').select('id,brand,model,plate_number')
+        .eq('approval_status','approved').order('plate_number')
+        .then(({data, error: maintenanceVehicleError}) => {
+          if (maintenanceVehicleError) setError(maintenanceVehicleError.message);
+          setMaintenanceVehicles(data || []);
+        });
+    }
     if (profile && view !== 'dashboard' && view !== 'availability' && view !== 'reports') {
       void loadRows(view);
     } else {
@@ -168,7 +177,7 @@ export default function App() {
     }
     let query: any = supabase.from(table).select('*');
     if (target === 'maintenance') {
-      query = supabase.from('fms_maintenance_records').select('*,documents:fms_maintenance_documents(id,document_type,file_path,original_file_name)');
+      query = supabase.from('fms_maintenance_records').select('*,vehicles:fms_vehicles(brand,model,plate_number),documents:fms_maintenance_documents(id,document_type,file_path,original_file_name)');
     }
     if (target === 'assignments') {
       query = supabase.from('fms_assignments').select('*,applications:fms_applications(reference,applicant_name,destination),vehicles:fms_vehicles(brand,model,plate_number),drivers:fms_drivers(full_name)');
@@ -183,6 +192,18 @@ export default function App() {
       loadedRows = loadedRows.map(vehicle => ({
         ...vehicle,
         documents: (vehicleDocs || []).filter((doc: Row) => doc.vehicle_id === vehicle.id)
+      }));
+    }
+    if (target === 'vehicles' && loadedRows.length) {
+      const today = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Kuching',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+      const {data: currentAssignments} = await supabase.from('fms_assignments')
+        .select('vehicle_id').eq('status','approved').lte('start_date',today).gte('end_date',today);
+      const assigned = new Set((currentAssignments || []).map((item: Row) => item.vehicle_id));
+      loadedRows = loadedRows.map(vehicle => ({
+        ...vehicle,
+        schedule_status: vehicle.vehicle_status !== 'active'
+          ? vehicle.vehicle_status
+          : assigned.has(vehicle.id) ? 'assigned' : 'available'
       }));
     }
     setRows(loadedRows);
