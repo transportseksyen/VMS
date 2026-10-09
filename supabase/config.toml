@@ -1,0 +1,10 @@
+project_id = "onxxgdbnonctwiykwdxo"
+
+[functions.submit-application]
+verify_jwt = false
+
+[functions.admin-users]
+verify_jwt = true
+
+[functions.send-fms-notification]
+verify_jwt = true
