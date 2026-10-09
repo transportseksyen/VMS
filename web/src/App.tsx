@@ -1130,5 +1130,17 @@ function FuelSummary({ rows }: { rows: Row[] }) {
 function Reports({ counts }: { counts: Record<string, number> }) {
   const items = [{label:'Applications',value:counts.applications || 0},{label:'Vehicles',value:counts.vehicles || 0},{label:'Drivers',value:counts.drivers || 0},{label:'Assignments',value:counts.assignments || 0},{label:'Fuel transactions',value:counts.fuel_transactions || 0},{label:'Maintenance records',value:counts.maintenance_records || 0}];
   const max = Math.max(1, ...items.map(i => i.value));
-  return <section className="panel"><PanelHeading title="Operational snapshot" subtitle="Live record counts from the database, filtered by your permissions." /><div className="report-bars">{items.map(i => <div className="report-bar-row" key={i.label}><div><span>{i.label}</span><strong>{i.value}</strong></div><div className="bar-track"><span style={{width:(i.value / max * 100) + '%'}} /></div></div>)}</div><p className="muted report-foot">Detailed PDF and Excel exports can be enabled after deployment and reporting templates are configured.</p></section>;
+  function downloadSummaryCsv() {
+    const csv = (value: unknown) => '"' + String(value ?? '').replaceAll('"','""') + '"';
+    const lines = [['Metric','Count'], ...items.map(item => [item.label,String(item.value)])]
+      .map(row => row.map(csv).join(','));
+    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'fms-operational-summary-' + new Date().toISOString().slice(0,10) + '.csv';
+    document.body.appendChild(link); link.click(); link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url),1000);
+  }
+  return <section className="panel report-panel"><div className="report-heading"><div><PanelHeading title="Operational snapshot" subtitle="Live record counts from the database, filtered by your permissions." /></div><div className="report-actions"><button className="btn btn-outline" onClick={downloadSummaryCsv}>Download summary CSV</button><button className="btn btn-primary" onClick={() => window.print()}>Print / Save PDF</button></div></div><div className="report-bars">{items.map(i => <div className="report-bar-row" key={i.label}><div><span>{i.label}</span><strong>{i.value}</strong></div><div className="bar-track"><span style={{width:(i.value / max * 100) + '%'}} /></div></div>)}</div><p className="muted report-foot">The summary CSV includes the currently loaded authorized record counts. Use Print / Save PDF and select “Save as PDF” in the browser print dialog for a printable snapshot.</p></section>;
 }
