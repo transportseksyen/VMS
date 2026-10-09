@@ -198,6 +198,7 @@ export default function App() {
         vehicles_requested: Number(fd.get('vehicles_requested')),
         passenger_names: String(fd.get('passenger_names') || '').trim(),
         destination: String(fd.get('destination') || '').trim(),
+        purpose: String(fd.get('purpose') || '').trim(),
         hotel_provided: String(fd.get('hotel_provided') || 'no') === 'yes',
         start_date: startDate,
         end_date: endDate
@@ -583,6 +584,7 @@ export default function App() {
                   <div className="form-two"><label>Number of passengers *<input type="number" min="1" max="500" name="passenger_count" defaultValue="1" required /></label><label>Number of vehicles *<input type="number" min="1" max="50" name="vehicles_requested" defaultValue="1" required /></label></div>
                   <label>Names of passengers<input name="passenger_names" placeholder="Enter names separated by commas" /></label>
                   <label>Destination *<input name="destination" required maxLength={250} /></label>
+                  <label>Purpose of application *<textarea name="purpose" rows={3} required maxLength={2000} placeholder="Explain the purpose of the trip and why a vehicle is required." /></label>
                   <div className="form-two"><label>Start date *<input type="date" name="start_date" required /></label><label>End date *<input type="date" name="end_date" required /></label></div>
                   <label>Hotel accommodation provided?<select name="hotel_provided" defaultValue="no"><option value="yes">Yes</option><option value="no">No</option></select></label>
                   <label className="upload-box"><span className="upload-icon">↑</span><span><strong>Official letter/memo + itinerary</strong><small>One combined PDF · maximum 5 MB</small></span><input type="file" name="document" accept=".pdf,application/pdf" required /></label>
@@ -711,7 +713,7 @@ function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, o
   if (loading) return <Loading />;
   const columns: Record<string, {key:string;label:string}[]> = {
     agencies: [{key:'name',label:'Agency name'},{key:'code',label:'Code'},{key:'is_active',label:'Status'}],
-    applications: [{key:'reference',label:'Reference'},{key:'applicant_name',label:'Applicant'},{key:'destination',label:'Destination'},{key:'start_date',label:'Start'},{key:'end_date',label:'End'},{key:'document_path',label:'PDF'},{key:'status',label:'Status'}],
+    applications: [{key:'reference',label:'Reference'},{key:'applicant_name',label:'Applicant'},{key:'destination',label:'Destination'},{key:'purpose',label:'Purpose'},{key:'start_date',label:'Start'},{key:'end_date',label:'End'},{key:'document_path',label:'PDF'},{key:'status',label:'Status'}],
     vehicles: [{key:'brand',label:'Brand'},{key:'model',label:'Model'},{key:'vehicle_type',label:'Type'},{key:'plate_number',label:'Registration'},{key:'approval_status',label:'Approval'},{key:'vehicle_status',label:'Status'}],
     drivers: [{key:'full_name',label:'Driver'},{key:'email',label:'Email'},{key:'phone',label:'Phone'},{key:'availability_status',label:'Availability'},{key:'approval_status',label:'Approval'}],
     assignments: [{key:'application',label:'Request'},{key:'vehicle',label:'Vehicle'},{key:'driver',label:'Driver'},{key:'start_date',label:'Start'},{key:'end_date',label:'End'},{key:'status',label:'Status'}],
