@@ -50,12 +50,12 @@ Deno.serve(async (request: Request) => {
     const ipHash = await sha256(forwarded);
     const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
-    const { count, error: rateError } = await admin.from("public_submission_rate_limits")
+    const { count, error: rateError } = await admin.from("fms_public_submission_rate_limits")
       .select("id", { count: "exact", head: true })
       .eq("ip_hash", ipHash).gte("created_at", since);
     if (rateError) return reply(503, { error: "Submission validation is temporarily unavailable" });
     if ((count || 0) >= 5) return reply(429, { error: "Too many submissions. Please try again later." });
-    const { error: rateInsertError } = await admin.from("public_submission_rate_limits").insert({ ip_hash: ipHash });
+    const { error: rateInsertError } = await admin.from("fms_public_submission_rate_limits").insert({ ip_hash: ipHash });
     if (rateInsertError) return reply(503, { error: "Submission validation is temporarily unavailable" });
 
     const body = await request.json();
@@ -85,7 +85,7 @@ Deno.serve(async (request: Request) => {
     if (base64.length < 8 || base64.length > 7_100_000) return reply(400, { error: "PDF is missing or larger than 5 MB" });
     if (fileName && !fileName.toLowerCase().endsWith(".pdf")) return reply(400, { error: "Upload one combined PDF only" });
 
-    const { data: agency, error: agencyError } = await admin.from("agencies")
+    const { data: agency, error: agencyError } = await admin.from("fms_agencies")
       .select("id,name,is_active").eq("id", agencyId).eq("is_active", true).maybeSingle();
     if (agencyError || !agency) return reply(400, { error: "Please select an active fleet agency" });
 
@@ -106,7 +106,7 @@ Deno.serve(async (request: Request) => {
     });
     if (uploadError) return reply(500, { error: "Could not securely store the PDF" });
 
-    const { data: saved, error: insertError } = await admin.from("applications").insert({
+    const { data: saved, error: insertError } = await admin.from("fms_applications").insert({
       id: applicationId,
       agency_id: agencyId,
       applicant_name: name,
@@ -134,12 +134,12 @@ Deno.serve(async (request: Request) => {
       "FMS vehicle request received — " + reference,
       "<p>Dear " + escapeHtml(name) + ",</p><p>Your vehicle request has been received by FMS.</p><p><strong>Reference:</strong> " + escapeHtml(reference) + "<br><strong>Fleet agency:</strong> " + escapeHtml(agency.name) + "<br><strong>Destination:</strong> " + escapeHtml(destination) + "<br><strong>Vehicle dates:</strong> " + startDate + " to " + endDate + "</p><p>Current status: Pending Assignment.</p><p>Fleet Management System — Sarawak</p>"
     );
-    await admin.from("notifications").insert({
+    await admin.from("fms_notifications").insert({
       recipient_email: email,
       subject: "FMS vehicle request received — " + reference,
       body: "Application acknowledgement. Reference: " + reference,
       notification_type: "application_submitted",
-      related_table: "applications",
+      related_table: "fms_applications",
       related_record_id: applicationId,
       email_status: emailResult.status,
       email_error: emailResult.error ? String(emailResult.error).slice(0, 1000) : null,
