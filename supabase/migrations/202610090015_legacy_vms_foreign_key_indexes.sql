@@ -1,0 +1,13 @@
+begin;
+create index if not exists applications_reviewed_by_idx on public.applications(reviewed_by);
+create index if not exists assignments_application_id_idx on public.assignments(application_id);
+create index if not exists attachments_application_id_idx on public.attachments(application_id);
+create index if not exists attachments_assignment_id_idx on public.attachments(assignment_id);
+create index if not exists attachments_maintenance_id_idx on public.attachments(maintenance_id);
+create index if not exists attachments_uploaded_by_idx on public.attachments(uploaded_by);
+create index if not exists audit_logs_actor_id_idx on public.audit_logs(actor_id);
+create index if not exists fuel_records_created_by_idx on public.fuel_records(created_by);
+create index if not exists maintenance_records_created_by_idx on public.maintenance_records(created_by);
+create index if not exists movement_updates_assignment_id_idx on public.movement_updates(assignment_id);
+create index if not exists movement_updates_driver_id_idx on public.movement_updates(driver_id);
+commit;
