@@ -412,6 +412,7 @@ export default function App() {
 
   async function decideApplication(row: Row, decision: 'approve' | 'reject' | 'return') {
     if (!supabase || !profile || !['fleet_manager','super_admin'].includes(profile.role)) return;
+    const client = supabase;
     setError(''); setNotice('');
     let reason = '';
     if (decision !== 'approve') {
@@ -421,15 +422,15 @@ export default function App() {
     }
     setBusy(true);
     const result = decision === 'approve'
-      ? await supabase.rpc('fms_approve_application' as any, { p_application_id: row.id } as any)
+      ? await client.rpc('fms_approve_application' as any, { p_application_id: row.id } as any)
       : decision === 'reject'
-        ? await supabase.rpc('fms_reject_application' as any, { p_application_id: row.id, p_reason: reason } as any)
-        : await supabase.rpc('fms_return_application_for_correction' as any, { p_application_id: row.id, p_reason: reason } as any);
+        ? await client.rpc('fms_reject_application' as any, { p_application_id: row.id, p_reason: reason } as any)
+        : await client.rpc('fms_return_application_for_correction' as any, { p_application_id: row.id, p_reason: reason } as any);
     if (result.error || result.data?.error) { setError(result.data?.error || result.error?.message || 'Application decision could not be saved.'); setBusy(false); return; }
     const assignmentIds: string[] = Array.isArray(result.data?.assignment_ids) ? result.data.assignment_ids.filter((id: unknown): id is string => typeof id === 'string') : [];
     const notificationType = decision === 'approve' ? 'assignment-approved' : decision === 'reject' ? 'assignment-rejected' : 'assignment-returned';
     const notificationIds: Array<string | null> = assignmentIds.length ? assignmentIds : [null];
-    const notifications = await Promise.all(notificationIds.map((assignmentId, index) => supabase.functions.invoke('send-fms-notification', {
+    const notifications = await Promise.all(notificationIds.map((assignmentId, index) => client.functions.invoke('send-fms-notification', {
       body: { type: notificationType, application_id: row.id, assignment_id: assignmentId, reason, notifyApplicant: index === 0 }
     })));
     const failed = notifications.some(n => n.error || n.data?.success !== true);
