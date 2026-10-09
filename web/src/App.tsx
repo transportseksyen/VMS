@@ -310,8 +310,21 @@ export default function App() {
     const requested = Number(data?.vehicles_requested || 1);
     setSelectedApp(null);
     setNotice(data?.application_status === 'pending_manager_approval' ? 'All ' + requested + ' requested vehicle assignment(s) are submitted for Fleet Manager approval.' : 'Vehicle assignment ' + submitted + ' of ' + requested + ' submitted. Complete the remaining assignment(s) before Fleet Manager review.');
+    if (data?.application_status === 'pending_manager_approval') {
+      const reviewerNotice = await supabase.functions.invoke('send-fms-notification', {
+        body: { type: 'assignment-submitted', application_id: selectedApp.id }
+      });
+      if (reviewerNotice.error || reviewerNotice.data?.success !== true) {
+        setNotice('Assignments saved for Fleet Manager approval, but the reviewer notification could not be confirmed. Check Notifications.');
+      } else if ((reviewerNotice.data?.statuses || []).some((item: Row) => item.status !== 'sent')) {
+        const statusSummary = [...new Set((reviewerNotice.data?.statuses || []).map((item: Row) => item.status))].join(', ') || 'not configured';
+        setNotice('Assignments saved for approval. Reviewer email status: ' + statusSummary + '. Check Notifications for details.');
+      } else {
+        setNotice('All requested vehicle assignments are saved and the Fleet Manager has been notified.');
+      }
+    }
     setBusy(false);
-    await Promise.all([loadRows('applications'), loadRows('assignments'), loadCounts()]);
+    await Promise.all([loadRows('applications'), loadRows('assignments'), loadCounts(), loadRows('notifications')]);
   }
 
   async function decideAssignment(row: Row, decision: 'cancel') {
