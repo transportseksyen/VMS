@@ -460,7 +460,7 @@ create or replace function public.fms_approve_vehicle(p_vehicle_id uuid)
 returns jsonb
 language plpgsql security definer
 set search_path = ''
-as $
+as $$
 declare v_agency uuid; v_role text;
 begin
   if (select auth.uid()) is null then raise exception 'Authentication required'; end if;
@@ -476,13 +476,13 @@ begin
     values ((select auth.uid()),v_agency,'approve_vehicle','vehicle',p_vehicle_id);
   return jsonb_build_object('success',true,'vehicle_id',p_vehicle_id);
 end;
-$;
+$$;
 
 create or replace function public.fms_approve_driver(p_driver_id uuid)
 returns jsonb
 language plpgsql security definer
 set search_path = ''
-as $
+as $$
 declare v_agency uuid; v_role text;
 begin
   if (select auth.uid()) is null then raise exception 'Authentication required'; end if;
@@ -502,7 +502,7 @@ begin
     values ((select auth.uid()),v_agency,'approve_driver','driver',p_driver_id);
   return jsonb_build_object('success',true,'driver_id',p_driver_id);
 end;
-$;
+$$;
 
 revoke all on function public.fms_approve_vehicle(uuid) from public, anon;
 revoke all on function public.fms_approve_driver(uuid) from public, anon;
