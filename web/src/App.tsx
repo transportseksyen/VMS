@@ -139,7 +139,7 @@ export default function App() {
     }
     if (supabase && profile && view === 'maintenance' && ['data_entry','fleet_manager','super_admin'].includes(profile.role)) {
       void supabase.from('fms_vehicles').select('id,brand,model,plate_number')
-        .eq('approval_status','approved').order('plate_number')
+        .eq('approval_status','approved').eq('vehicle_status','active').order('plate_number')
         .then(({data, error: maintenanceVehicleError}) => {
           if (maintenanceVehicleError) setError(maintenanceVehicleError.message);
           setMaintenanceVehicles(data || []);
@@ -537,24 +537,46 @@ export default function App() {
     const vehicleId = String(fd.get('vehicle_id') || '');
     const purchaseDate = String(fd.get('purchase_date') || '');
     const reportingMonth = String(fd.get('reporting_month') || '');
+    const odometer = Number(fd.get('odometer_reading'));
+    const litres = Number(fd.get('litres'));
+    const amount = Number(fd.get('amount_rm'));
     if (!purchaseDate || reportingMonth !== purchaseDate.slice(0, 7)) { setError('Reporting month must match the purchase date.'); return; }
+    if (!Number.isFinite(odometer) || odometer < 0 || !Number.isFinite(litres) || litres <= 0 || !Number.isFinite(amount) || amount <= 0) {
+      setError('Enter a valid odometer reading, fuel quantity and total cost.'); return;
+    }
     const { data: driverRecord, error: driverError } = await supabase.from('fms_drivers').select('id').eq('profile_id', profile.id).maybeSingle();
     if (driverError || !driverRecord) { setError('Your driver profile is not linked. Contact the Data Entry user or Fleet Manager.'); return; }
     const safeFileName = receipt.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const path = profile.agency_id + '/fuel/' + driverRecord.id + '/' + crypto.randomUUID() + '-' + safeFileName;
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setNotice('');
     const { error: uploadError } = await supabase.storage.from('fms-documents').upload(path, receipt, { contentType: receipt.type, upsert: false });
     if (uploadError) { setError(uploadError.message); setBusy(false); return; }
-    const { error: insertError } = await supabase.from('fms_fuel_transactions').insert({
+    const { data: savedFuel, error: insertError } = await supabase.from('fms_fuel_transactions').insert({
       agency_id: profile.agency_id, driver_id: driverRecord.id, vehicle_id: vehicleId,
       reporting_month: reportingMonth,
       purchase_date: purchaseDate,
-      odometer_reading: Number(fd.get('odometer_reading')),
-      litres: Number(fd.get('litres')), amount_rm: Number(fd.get('amount_rm')),
+      odometer_reading: odometer,
+      litres, amount_rm: amount,
       receipt_path: path, status: 'submitted'
+    }).select('id').single();
+    if (insertError || !savedFuel) {
+      await supabase.storage.from('fms-documents').remove([path]);
+      setError(insertError?.message || 'Fuel report could not be saved.');
+      setBusy(false);
+      return;
+    }
+    const notification = await supabase.functions.invoke('send-fms-notification', {
+      body: { type: 'fuel-submitted', fuel_transaction_id: savedFuel.id }
     });
-    if (insertError) { await supabase.storage.from('fms-documents').remove([path]); setError(insertError.message); }
-    else { setNotice('Fuel transaction submitted with receipt.'); await loadRows('fuel'); form.reset(); }
+    if (notification.error || notification.data?.success !== true) {
+      setNotice('Fuel report submitted successfully, but reviewer notification could not be confirmed. Contact your Fleet Manager.');
+    } else if ((notification.data?.statuses || []).some((item: Row) => item.status !== 'sent')) {
+      setNotice('Fuel report submitted. Some reviewer emails are not configured or could not be delivered; check Notifications.');
+    } else {
+      setNotice('Fuel report submitted successfully and reviewer notification results were recorded.');
+    }
+    await Promise.all([loadRows('fuel'), loadRows('notifications'), loadCounts()]);
+    form.reset();
     setBusy(false);
   }
 
