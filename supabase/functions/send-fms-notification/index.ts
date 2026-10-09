@@ -265,7 +265,7 @@ Deno.serve(async (request: Request) => {
       if (type === "assignment-rejected" && assignment.status !== "rejected") return reply(409, { error: "Assignment is not rejected" });
       if (assignment) {
         const [driverResult, vehicleResult] = await Promise.all([
-          admin.from("fms_drivers").select("full_name,email,phone,whatsapp_opt_in").eq("id", assignment.driver_id).maybeSingle(),
+          admin.from("fms_drivers").select("profile_id,full_name,email,phone,whatsapp_opt_in").eq("id", assignment.driver_id).maybeSingle(),
           admin.from("fms_vehicles").select("brand,model,plate_number").eq("id", assignment.vehicle_id).maybeSingle()
         ]);
         driver = driverResult.data;
@@ -279,9 +279,32 @@ Deno.serve(async (request: Request) => {
       : type === "assignment-rejected" ? "FMS vehicle request rejected — " + application.reference
       : isReturned ? "FMS vehicle request returned for correction — " + application.reference
       : "FMS assignment cancelled — " + application.reference;
-    const details = vehicle && driver
+    let details = vehicle && driver
       ? "<p><strong>Driver:</strong> " + esc(driver.full_name) + "<br><strong>Vehicle:</strong> " + esc(vehicle.brand) + " " + esc(vehicle.model) + " (" + esc(vehicle.plate_number) + ")<br><strong>Travel dates:</strong> " + esc(application.start_date) + " to " + esc(application.end_date) + "</p>"
       : "";
+    if (type === "assignment-approved" && body?.notifyApplicant !== false) {
+      const { data: approvedAssignments, error: approvedAssignmentsError } = await admin.from("fms_assignments")
+        .select("id,driver_id,vehicle_id,start_date,end_date")
+        .eq("application_id", applicationId).eq("status","approved").order("start_date");
+      if (approvedAssignmentsError) return reply(503, { error: "Approved assignment details could not be checked" });
+      const driverIds = Array.from(new Set((approvedAssignments || []).map((item: Record<string,any>) => item.driver_id)));
+      const vehicleIds = Array.from(new Set((approvedAssignments || []).map((item: Record<string,any>) => item.vehicle_id)));
+      const [{ data: driverRows }, { data: vehicleRows }] = await Promise.all([
+        driverIds.length ? admin.from("fms_drivers").select("id,full_name").in("id",driverIds) : Promise.resolve({data:[]}),
+        vehicleIds.length ? admin.from("fms_vehicles").select("id,brand,model,plate_number").in("id",vehicleIds) : Promise.resolve({data:[]})
+      ]);
+      const driverById = new Map((driverRows || []).map((item: Record<string,any>) => [item.id,item]));
+      const vehicleById = new Map((vehicleRows || []).map((item: Record<string,any>) => [item.id,item]));
+      const assignmentList = (approvedAssignments || []).map((item: Record<string,any>, index: number) => {
+        const assignedDriver = driverById.get(item.driver_id);
+        const assignedVehicle = vehicleById.get(item.vehicle_id);
+        return "<li>Vehicle " + (index + 1) + ": " + esc(assignedVehicle?.brand || "") + " " + esc(assignedVehicle?.model || "") +
+          " (" + esc(assignedVehicle?.plate_number || "Registration unavailable") + ") — Driver: " + esc(assignedDriver?.full_name || "Not available") +
+          "; " + esc(item.start_date) + " to " + esc(item.end_date) + "</li>";
+      }).join("");
+      details = "<p><strong>Travel dates:</strong> " + esc(application.start_date) + " to " + esc(application.end_date) +
+        "</p><p><strong>Confirmed vehicle and driver assignments:</strong></p><ul>" + assignmentList + "</ul>";
+    }
     const reason = body.reason ? "<p><strong>Remarks:</strong> " + esc(body.reason) + "</p>" : "";
     const decisionLabel = isApproved ? "approved" : type === "assignment-rejected" ? "rejected" : isReturned ? "returned for correction" : "cancelled";
     let applicantEmailStatus = "skipped";
@@ -330,7 +353,7 @@ Deno.serve(async (request: Request) => {
       driverStatus = result.status;
       driverWhatsAppStatus = driverWhatsApp.status;
       await admin.from("fms_notifications").insert({
-        recipient_email: driver.email, subject: driverSubject,
+        recipient_profile_id: driver.profile_id || null, recipient_email: driver.email, subject: driverSubject,
         body: driverMessage + " Reference: " + application.reference,
         notification_type: type === "assignment-approved" ? "driver_assignment" : type === "assignment-rejected" ? "driver_assignment_rejected" : isReturned ? "driver_assignment_returned" : "driver_assignment_cancelled",
         related_table: "fms_assignments", related_record_id: assignmentId,
