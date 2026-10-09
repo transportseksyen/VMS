@@ -80,9 +80,15 @@ npm run preview
 
 GitHub Actions workflow: `.github/workflows/fms-web-check.yml`. It installs dependencies and runs the TypeScript/Vite production build on changes to the web app or Supabase files.
 
-## Vercel deployment
+## Live web deployment
 
-A Vercel project named `fms-sarawak` was created, but the Vercel API rejected the update/deployment attempt with a scope authorization error for `fms-e513`. No live production deployment URL has been verified yet.
+The FMS web app is deployed through GitHub Pages at:
+
+**https://transportseksyen.github.io/VMS/**
+
+The GitHub Actions deployment reported success on October 9, 2026. The build is also synchronized to the repository root as a fallback for branch-based GitHub Pages configuration. Future changes under `web/` automatically rebuild and publish the web app.
+
+A Vercel project named `fms-sarawak` was also created, but Vercel integration could not be completed because its API rejected operations with a scope authorization error for `fms-e513`. GitHub Pages is the current deployment path.
 
 To finish deployment:
 1. Connect the GitHub account to Vercel using the required GitHub Login Connection and ensure the Vercel account has access to the project's team/scope.
@@ -91,18 +97,7 @@ To finish deployment:
 4. Confirm `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` are configured for Production and Preview.
 5. Deploy the `main` branch and verify the generated URL in a private/incognito browser.
 
-If Git integration is not available, import `transportseksyen/VMS` into Vercel after connecting GitHub, with root directory `web`.
-
-### GitHub Pages fallback
-
-A workflow is also present at `.github/workflows/deploy-fms-pages.yml`. Its first run could not initialize Pages because the GitHub Actions integration does not currently have permission to create the Pages site.
-
-A repository administrator must enable Pages once:
-1. Open https://github.com/transportseksyen/VMS/settings/pages.
-2. Under **Build and deployment**, select **Deploy from a branch** only if that is the available option, then switch to **GitHub Actions** as the source. If GitHub shows a one-click Pages setup action, use it to enable Pages.
-3. Ensure the repository Actions policy permits the official GitHub Pages actions.
-4. Open https://github.com/transportseksyen/VMS/actions/workflows/deploy-fms-pages.yml and select **Run workflow**, or push a change under `web/`.
-5. Wait for the workflow to show success; its deployment output provides the actual site URL. The expected project URL format is `https://transportseksyen.github.io/VMS/`, but it is not active/verified until GitHub Pages reports a successful deployment.
+If a custom domain is needed later, connect it through the GitHub Pages or Vercel project settings and verify it before changing the mobile wrappers.
 
 ## Security and production checklist
 
