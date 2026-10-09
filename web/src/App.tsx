@@ -665,8 +665,9 @@ export default function App() {
     const fd = new FormData(form);
     const agencyId = profile.role === 'super_admin' ? String(fd.get('agency_id') || '') : String(profile.agency_id || '');
     if (!agencyId) { setError('Select the agency for this driver.'); return; }
+    const driverId = crypto.randomUUID();
     const record = {
-      agency_id: agencyId, full_name: String(fd.get('full_name') || '').trim(),
+      id: driverId, agency_id: agencyId, full_name: String(fd.get('full_name') || '').trim(),
       email: String(fd.get('email') || '').trim(), phone: String(fd.get('phone') || '').trim(),
       emergency_contact_name: String(fd.get('emergency_contact_name') || '').trim(),
       emergency_contact_phone: String(fd.get('emergency_contact_phone') || '').trim(),
@@ -678,7 +679,7 @@ export default function App() {
     if (saveError) setError(saveError.message);
     else {
       const reviewerNotice = await supabase.functions.invoke('send-fms-notification', {
-        body: { type: 'registry-record-submitted', entity_type: 'driver', entity_id: record.id || (await supabase.from('fms_drivers').select('id').eq('agency_id',agencyId).eq('email',record.email).order('created_at',{ascending:false}).limit(1).maybeSingle()).data?.id }
+        body: { type: 'registry-record-submitted', entity_type: 'driver', entity_id: driverId }
       });
       if (reviewerNotice.error || reviewerNotice.data?.success !== true) setNotice('Driver saved and submitted for approval, but reviewer notification could not be confirmed.');
       else {
