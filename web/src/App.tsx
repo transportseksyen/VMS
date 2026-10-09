@@ -30,7 +30,7 @@ const tableByView: Partial<Record<View, string>> = {
   assignments: 'fms_assignments', fuel: 'fms_fuel_transactions', maintenance: 'fms_maintenance_records', users: 'fms_profiles'
 };
 const statusText = (s: string) => (s || '—').replaceAll('_', ' ').replace(/\b\w/g, m => m.toUpperCase());
-const dateText = (v: string) => v ? new Date(v + (v.length === 10 ? 'T00:00:00' : '')).toLocaleDateString('en-MY') : '—';
+const dateText = (v: string) => { if (!v) return '—'; const raw = v.slice(0, 10); const [year, month, day] = raw.split('-'); return year && month && day ? day + '/' + month + '/' + year : v; };
 const moneyText = (v: number) => new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(Number(v || 0));
 
 export default function App() {
