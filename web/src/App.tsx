@@ -645,8 +645,16 @@ export default function App() {
         setBusy(false); await loadRows('vehicles'); return;
       }
     }
-    setNotice('Vehicle and ' + docs.length + ' supporting document(s) saved for Fleet Manager approval.');
-    await Promise.all([loadRows('vehicles'),loadCounts()]);
+    const reviewerNotice = await supabase.functions.invoke('send-fms-notification', {
+      body: { type: 'registry-record-submitted', entity_type: 'vehicle', entity_id: vehicleId }
+    });
+    const deliveryStatus = (reviewerNotice.data?.statuses || []).map((item: Row) => item.status);
+    setNotice(reviewerNotice.error || reviewerNotice.data?.success !== true
+      ? 'Vehicle and supporting documents saved for approval, but reviewer notification could not be confirmed.'
+      : deliveryStatus.some((status: string) => status !== 'sent')
+        ? 'Vehicle and ' + docs.length + ' supporting document(s) saved for approval. Reviewer email status: ' + ([...new Set(deliveryStatus)].join(', ') || 'no reviewer configured') + '.'
+        : 'Vehicle and ' + docs.length + ' supporting document(s) saved; reviewers have been notified.');
+    await Promise.all([loadRows('vehicles'),loadCounts(),loadRows('notifications')]);
     form.reset(); setBusy(false);
   }
 
@@ -668,7 +676,20 @@ export default function App() {
     setBusy(true); setError(''); setNotice('');
     const { error: saveError } = await supabase.from('fms_drivers').insert(record);
     if (saveError) setError(saveError.message);
-    else { setNotice('Driver saved and submitted for approval.'); await loadRows('drivers'); form.reset(); await loadCounts(); }
+    else {
+      const reviewerNotice = await supabase.functions.invoke('send-fms-notification', {
+        body: { type: 'registry-record-submitted', entity_type: 'driver', entity_id: record.id || (await supabase.from('fms_drivers').select('id').eq('agency_id',agencyId).eq('email',record.email).order('created_at',{ascending:false}).limit(1).maybeSingle()).data?.id }
+      });
+      if (reviewerNotice.error || reviewerNotice.data?.success !== true) setNotice('Driver saved and submitted for approval, but reviewer notification could not be confirmed.');
+      else {
+        const deliveryStatus = (reviewerNotice.data?.statuses || []).map((item: Row) => item.status);
+        setNotice(deliveryStatus.some((status: string) => status !== 'sent')
+          ? 'Driver saved for approval. Reviewer email status: ' + ([...new Set(deliveryStatus)].join(', ') || 'no reviewer configured') + '.'
+          : 'Driver saved and submitted; reviewers have been notified.');
+      }
+      await Promise.all([loadRows('drivers'),loadCounts(),loadRows('notifications')]);
+      form.reset();
+    }
     setBusy(false);
   }
 
