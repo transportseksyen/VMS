@@ -97,7 +97,7 @@ Deno.serve(async (request: Request) => {
     const assignmentId = String(body?.assignment_id || "");
     const { data: actor } = await admin.from("fms_profiles").select("id,role,agency_id,status").eq("id", authData.user.id).maybeSingle();
     if (!actor || actor.status !== "active" || !["fleet_manager","super_admin"].includes(actor.role)) return reply(403, { error: "Only authorized Fleet Managers can send decision notifications" });
-    if (!["assignment-approved","assignment-rejected","assignment-cancelled"].includes(type)) return reply(400, { error: "Unsupported notification type" });
+    if (!["assignment-approved","assignment-rejected","assignment-returned","assignment-cancelled"].includes(type)) return reply(400, { error: "Unsupported notification type" });
 
     const { data: application } = await admin.from("fms_applications").select("*").eq("id", applicationId).maybeSingle();
     if (!application) return reply(404, { error: "Application not found" });
@@ -118,28 +118,36 @@ Deno.serve(async (request: Request) => {
     }
 
     const isApproved = type === "assignment-approved";
+    const isReturned = type === "assignment-returned";
     const subject = isApproved ? "FMS vehicle request approved — " + application.reference
-      : type === "assignment-rejected" ? "FMS vehicle request decision — " + application.reference
+      : type === "assignment-rejected" ? "FMS vehicle request rejected — " + application.reference
+      : isReturned ? "FMS vehicle request returned for correction — " + application.reference
       : "FMS assignment cancelled — " + application.reference;
     const details = vehicle && driver
       ? "<p><strong>Driver:</strong> " + esc(driver.full_name) + "<br><strong>Vehicle:</strong> " + esc(vehicle.brand) + " " + esc(vehicle.model) + " (" + esc(vehicle.plate_number) + ")<br><strong>Travel dates:</strong> " + esc(application.start_date) + " to " + esc(application.end_date) + "</p>"
       : "";
     const reason = body.reason ? "<p><strong>Remarks:</strong> " + esc(body.reason) + "</p>" : "";
-    const decisionLabel = isApproved ? "approved" : type === "assignment-rejected" ? "rejected" : "cancelled";
-    const applicantResult = await sendEmail(application.email, subject,
-      "<p>Dear " + esc(application.applicant_name) + ",</p><p>Your FMS vehicle request <strong>" + esc(application.reference) + "</strong> has been " + decisionLabel + ".</p>" + details + reason + "<p>Fleet Management System — Sarawak</p>");
-    const applicantWhatsApp = application.whatsapp_opt_in && application.phone
-      ? await sendWhatsApp(application.phone, application.reference, "Vehicle request " + decisionLabel, "Destination: " + application.destination)
-      : { status: "not_opted_in", error: null };
-    await admin.from("fms_notifications").insert({
-      recipient_email: application.email, subject, body: subject + " " + (body.reason || ""),
-      notification_type: type, related_table: "fms_applications", related_record_id: application.id,
-      email_status: applicantResult.status, email_error: applicantResult.error ? String(applicantResult.error).slice(0,1000) : null,
-      sent_at: applicantResult.status === "sent" ? new Date().toISOString() : null,
-      whatsapp_status: applicantWhatsApp.status,
-      whatsapp_error: applicantWhatsApp.error ? String(applicantWhatsApp.error).slice(0,1000) : null,
-      whatsapp_sent_at: applicantWhatsApp.status === "sent" ? new Date().toISOString() : null
-    });
+    const decisionLabel = isApproved ? "approved" : type === "assignment-rejected" ? "rejected" : isReturned ? "returned for correction" : "cancelled";
+    let applicantEmailStatus = "skipped";
+    let applicantWhatsAppStatus = "skipped";
+    if (body?.notifyApplicant !== false) {
+      const applicantResult = await sendEmail(application.email, subject,
+        "<p>Dear " + esc(application.applicant_name) + ",</p><p>Your FMS vehicle request <strong>" + esc(application.reference) + "</strong> has been " + decisionLabel + ".</p>" + details + reason + "<p>Fleet Management System — Sarawak</p>");
+      const applicantWhatsApp = application.whatsapp_opt_in && application.phone
+        ? await sendWhatsApp(application.phone, application.reference, "Vehicle request " + decisionLabel, "Destination: " + application.destination)
+        : { status: "not_opted_in", error: null };
+      applicantEmailStatus = applicantResult.status;
+      applicantWhatsAppStatus = applicantWhatsApp.status;
+      await admin.from("fms_notifications").insert({
+        recipient_email: application.email, subject, body: subject + " " + (body.reason || ""),
+        notification_type: type, related_table: "fms_applications", related_record_id: application.id,
+        email_status: applicantResult.status, email_error: applicantResult.error ? String(applicantResult.error).slice(0,1000) : null,
+        sent_at: applicantResult.status === "sent" ? new Date().toISOString() : null,
+        whatsapp_status: applicantWhatsApp.status,
+        whatsapp_error: applicantWhatsApp.error ? String(applicantWhatsApp.error).slice(0,1000) : null,
+        whatsapp_sent_at: applicantWhatsApp.status === "sent" ? new Date().toISOString() : null
+      });
+    }
 
     let driverStatus = "not_applicable";
     let driverWhatsAppStatus = "not_applicable";
@@ -148,12 +156,16 @@ Deno.serve(async (request: Request) => {
         ? "FMS trip assignment confirmed — " + application.reference
         : type === "assignment-rejected"
           ? "FMS proposed trip not approved — " + application.reference
-          : "FMS trip assignment cancelled — " + application.reference;
+          : isReturned
+            ? "FMS trip proposal returned for correction — " + application.reference
+            : "FMS trip assignment cancelled — " + application.reference;
       const driverMessage = isApproved
         ? "Your vehicle assignment has been approved."
         : type === "assignment-rejected"
           ? "The proposed trip assignment was not approved. Please review the remarks below with your Fleet Manager."
-          : "The trip assignment has been cancelled. Please review the remarks below with your Fleet Manager.";
+          : isReturned
+            ? "The proposed trip was returned for correction. Please review the updated plan with your Fleet Manager."
+            : "The trip assignment has been cancelled. Please review the remarks below with your Fleet Manager.";
       const result = await sendEmail(driver.email, driverSubject,
         "<p>Dear " + esc(driver.full_name) + ",</p><p>" + driverMessage + "</p>" + details + reason + "<p>Reference: " + esc(application.reference) + "</p><p>Fleet Management System — Sarawak</p>");
       const driverWhatsApp = driver.whatsapp_opt_in && driver.phone
@@ -164,7 +176,7 @@ Deno.serve(async (request: Request) => {
       await admin.from("fms_notifications").insert({
         recipient_email: driver.email, subject: driverSubject,
         body: driverMessage + " Reference: " + application.reference,
-        notification_type: type === "assignment-approved" ? "driver_assignment" : type === "assignment-rejected" ? "driver_assignment_rejected" : "driver_assignment_cancelled",
+        notification_type: type === "assignment-approved" ? "driver_assignment" : type === "assignment-rejected" ? "driver_assignment_rejected" : isReturned ? "driver_assignment_returned" : "driver_assignment_cancelled",
         related_table: "fms_assignments", related_record_id: assignmentId,
         email_status: result.status, email_error: result.error ? String(result.error).slice(0,1000) : null,
         sent_at: result.status === "sent" ? new Date().toISOString() : null,
@@ -173,7 +185,7 @@ Deno.serve(async (request: Request) => {
         whatsapp_sent_at: driverWhatsApp.status === "sent" ? new Date().toISOString() : null
       });
     }
-    return reply(200, { success: true, applicantEmailStatus: applicantResult.status, applicantWhatsAppStatus: applicantWhatsApp.status, driverEmailStatus: driverStatus, driverWhatsAppStatus });
+    return reply(200, { success: true, applicantEmailStatus, applicantWhatsAppStatus, driverEmailStatus: driverStatus, driverWhatsAppStatus });
   } catch (error) {
     console.error("send-fms-notification", error);
     return reply(500, { error: "An unexpected notification error occurred" });
