@@ -432,10 +432,14 @@ using (
           and exists (select 1 from public.fms_drivers d where d.id::text = (storage.foldername(name))[3] and d.profile_id = (select auth.uid())))))
     or (fms_private.current_role() = 'super_admin' and (storage.foldername(name))[1] <> 'incoming')
     or exists (select 1 from public.fms_applications ap
-      where ap.document_path = storage.objects.name and fms_private.has_agency_access(ap.agency_id))
+      where ap.document_path = storage.objects.name
+        and fms_private.has_agency_access(ap.agency_id)
+        and fms_private.current_role() in ('super_admin','fleet_manager','data_entry'))
     or exists (select 1 from public.fms_maintenance_documents md
       join public.fms_maintenance_records mr on mr.id = md.maintenance_id
-      where md.file_path = storage.objects.name and fms_private.has_agency_access(mr.agency_id))
+      where md.file_path = storage.objects.name
+        and fms_private.has_agency_access(mr.agency_id)
+        and fms_private.current_role() in ('super_admin','fleet_manager','data_entry'))
   )
 );
 drop policy if exists fms_agency_document_insert on storage.objects;
@@ -596,5 +600,14 @@ revoke all on function public.fms_approve_assignment(uuid) from public, anon;
 revoke all on function public.fms_reject_assignment(uuid,text) from public, anon;
 grant execute on function public.fms_approve_assignment(uuid) to authenticated;
 grant execute on function public.fms_reject_assignment(uuid,text) to authenticated;
+
+-- Explicit service-role permissions for trusted Edge Functions (the key stays server-side only).
+grant all privileges on public.fms_agencies, public.fms_profiles, public.fms_vehicles,
+  public.fms_drivers, public.fms_applications, public.fms_assignments,
+  public.fms_fuel_transactions, public.fms_maintenance_records,
+  public.fms_maintenance_documents, public.fms_notifications,
+  public.fms_audit_logs, public.fms_public_submission_rate_limits to service_role;
+grant usage on schema fms_private to service_role;
+grant execute on all functions in schema fms_private to service_role;
 
 commit;
