@@ -5,7 +5,7 @@ import { supabase, supabaseConfigured } from './lib/supabase';
 type Role = 'super_admin' | 'fleet_manager' | 'data_entry' | 'driver';
 type Row = Record<string, any>;
 type Profile = { id: string; full_name: string; role: Role; agency_id: string | null; status: string };
-type View = 'dashboard' | 'applications' | 'vehicles' | 'drivers' | 'assignments' | 'fuel' | 'maintenance' | 'users' | 'availability' | 'reports' | 'agencies' | 'notifications';
+type View = 'dashboard' | 'applications' | 'vehicles' | 'drivers' | 'assignments' | 'fuel' | 'maintenance' | 'users' | 'availability' | 'reports' | 'agencies' | 'notifications' | 'audit_logs' | 'settings';
 
 const roleTitles: Record<Role, string> = {
   super_admin: 'Super Admin',
@@ -17,17 +17,17 @@ const titleByView: Record<View, string> = {
   dashboard: 'Dashboard', agencies: 'Agencies', applications: 'Applications', vehicles: 'Vehicles',
   drivers: 'Drivers', assignments: 'Assignment Monitoring', fuel: 'Monthly Fuel Analysis',
   maintenance: 'Maintenance', users: 'User Management', availability: 'My Availability',
-  reports: 'Reports', notifications: 'Notifications'
+  reports: 'Reports', notifications: 'Notifications', audit_logs: 'Audit Logs', settings: 'System Settings'
 };
 const navByRole: Record<Role, View[]> = {
-  super_admin: ['dashboard', 'agencies', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications', 'users'],
-  fleet_manager: ['dashboard', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications', 'users'],
+  super_admin: ['dashboard', 'agencies', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications', 'audit_logs', 'users', 'settings'],
+  fleet_manager: ['dashboard', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications', 'audit_logs', 'users'],
   data_entry: ['dashboard', 'applications', 'vehicles', 'drivers', 'assignments', 'fuel', 'maintenance', 'reports', 'notifications'],
   driver: ['dashboard', 'assignments', 'vehicles', 'drivers', 'fuel', 'availability', 'notifications']
 };
 const tableByView: Partial<Record<View, string>> = {
   agencies: 'fms_agencies', applications: 'fms_applications', vehicles: 'fms_vehicles', drivers: 'fms_drivers',
-  assignments: 'fms_assignments', fuel: 'fms_fuel_transactions', maintenance: 'fms_maintenance_records', users: 'fms_profiles', notifications: 'fms_notifications'
+  assignments: 'fms_assignments', fuel: 'fms_fuel_transactions', maintenance: 'fms_maintenance_records', users: 'fms_profiles', notifications: 'fms_notifications', audit_logs: 'fms_audit_logs'
 };
 const statusText = (s: string) => (s || '—').replaceAll('_', ' ').replace(/\b\w/g, m => m.toUpperCase());
 const dateText = (v: string) => { if (!v) return '—'; const raw = v.slice(0, 10); const [year, month, day] = raw.split('-'); return year && month && day ? day + '/' + month + '/' + year : v; };
@@ -55,6 +55,9 @@ export default function App() {
   const [maintenanceVehicles, setMaintenanceVehicles] = useState<Row[]>([]);
   const [driverWhatsAppOptIn, setDriverWhatsAppOptIn] = useState(false);
   const [driverAvailability, setDriverAvailabilityState] = useState({ status: 'available', start: '', end: '', remarks: '' });
+  const [systemHealth, setSystemHealth] = useState<Row | null>(null);
+  const [systemHealthLoading, setSystemHealthLoading] = useState(false);
+  const [systemHealthError, setSystemHealthError] = useState('');
 
   useEffect(() => {
     if (!supabase) return;
@@ -80,6 +83,27 @@ export default function App() {
         .then(({ data }) => setAgencies(data || []));
     }
   }, []);
+
+  useEffect(() => {
+    if (!supabase || !profile || profile.role !== 'super_admin' || profile.status !== 'active' || view !== 'settings') return;
+    let cancelled = false;
+    setSystemHealthLoading(true);
+    setSystemHealthError('');
+    void supabase.functions.invoke('fms-system-health').then(({data, error: healthError}) => {
+      if (cancelled) return;
+      if (healthError || data?.error || !data?.success) {
+        setSystemHealthError(data?.error || healthError?.message || 'System health could not be retrieved.');
+      } else {
+        setSystemHealth(data as Row);
+      }
+      setSystemHealthLoading(false);
+    }).catch((healthError: unknown) => {
+      if (cancelled) return;
+      setSystemHealthError(healthError instanceof Error ? healthError.message : 'System health could not be retrieved.');
+      setSystemHealthLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [profile, view]);
 
   useEffect(() => {
     if (!supabase || !profile || profile.role !== 'driver') {
@@ -160,6 +184,18 @@ export default function App() {
     setCounts(next);
   }
 
+  async function loadSystemHealth() {
+    if (!supabase || profile?.role !== 'super_admin' || profile.status !== 'active') return;
+    setSystemHealthLoading(true); setSystemHealthError('');
+    const {data, error: healthError} = await supabase.functions.invoke('fms-system-health');
+    if (healthError || data?.error || !data?.success) {
+      setSystemHealthError(data?.error || healthError?.message || 'System health could not be retrieved.');
+    } else {
+      setSystemHealth(data as Row);
+    }
+    setSystemHealthLoading(false);
+  }
+
   async function loadRows(target: View) {
     if (!supabase) return;
     const isDriverDirectory = target === 'drivers' && profile?.role === 'driver';
@@ -181,6 +217,9 @@ export default function App() {
     }
     if (target === 'assignments') {
       query = supabase.from('fms_assignments').select('*,applications:fms_applications(reference,applicant_name,destination),vehicles:fms_vehicles(brand,model,plate_number),drivers:fms_drivers(full_name)');
+    }
+    if (target === 'audit_logs') {
+      query = supabase.from('fms_audit_logs').select('*');
     }
     const { data, error: queryError } = await query.order('created_at', { ascending: false }).limit(100);
     if (queryError) setError(queryError.message);
@@ -920,8 +959,10 @@ export default function App() {
           {view === 'agencies' && profile.role === 'super_admin' && <><section className="panel"><PanelHeading title="Agency registry" subtitle="Create and manage the agencies served by FMS." /><DataTable rows={rows} kind="agencies" loading={loading} role={profile.role} onApprove={r => void toggleAgency(r)} /></section><section className="panel form-panel"><PanelHeading title="Register an agency" subtitle="Only active agencies appear in the public vehicle request form." /><form className="form-grid" onSubmit={createAgency}><label>Agency name *<input name="name" required maxLength={180} /></label><label>Agency code<input name="code" maxLength={16} placeholder="Example: SIBU-TR" /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Create agency</button></div></form></section></>}{view === 'users' && <><section className="panel"><PanelHeading title="Staff directory" subtitle="View accounts visible within your authorized scope." /><DataTable rows={rows} kind="users" loading={loading} role={profile.role} busy={busy} agencies={agencies} currentUserId={profile.id} onApprove={r => void approveStaff(r)} onStatus={(r, action) => void changeUserStatus(r, action)} onRoleAgency={changeUserRoleAgency} /></section><section className="panel form-panel"><PanelHeading title="Invite a staff user" subtitle="An invitation email will be sent. Role and agency permissions are validated server-side." /><form className="form-grid" onSubmit={inviteUser}><label>Full name *<input name="full_name" required /></label><label>Email address *<input name="email" type="email" required /></label><label>Role *<select name="role" required defaultValue=""><option value="" disabled>Select role</option>{(profile.role === 'super_admin' ? ['super_admin','fleet_manager','data_entry','driver'] : ['data_entry','driver']).map(r => <option key={r} value={r}>{roleTitles[r as Role]}</option>)}</select></label><label>Agency *<select name="agency_id" required defaultValue=""><option value="" disabled>Select agency</option>{agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Send invitation</button></div></form><div className="panel-foot">Super Admin can appoint Fleet Managers to any active agency. Fleet Managers can invite Data Entry and Drivers for their own agency only.</div></section></>}
           {view === 'reports' && <Reports counts={counts} />}
           {view === 'notifications' && <section className="panel"><PanelHeading title="Notifications" subtitle={profile.role === 'super_admin' ? 'System-wide delivery history, provider responses and errors.' : 'Your FMS notification history. Delivery is only reported as successful when the provider confirms it.'} /><DataTable rows={rows} kind="notifications" loading={loading} role={profile.role} /></section>}
+          {view === 'audit_logs' && <section className="panel"><PanelHeading title="Audit Logs" subtitle="Recorded approvals, rejections, account changes, cancellations and operational updates. Access is restricted by role and agency." /><DataTable rows={rows} kind="audit_logs" loading={loading} role={profile.role} /></section>}
+          {view === 'settings' && profile.role === 'super_admin' && <SystemSettings health={systemHealth} loading={systemHealthLoading} error={systemHealthError} onRefresh={() => void loadSystemHealth()} />}
         </div>
-        <footer className="main-footer"><span>FMS · Fleet Management System</span><span>Authorized access only</span><span>Sarawak · Malaysia</span></footer>
+        <footer className="main-footer"><span>FMS · Fleet Management System</span><span>Authorized access only</span><span>Sarawak · Malaysia</span><span>Built &amp; Powered by Seksyen Pengangkutan Residen Sibu</span></footer>
       </main>
       {selectedApp && <div className="modal-backdrop" role="presentation"><section className="modal" role="dialog" aria-modal="true"><button className="modal-close" onClick={() => setSelectedApp(null)}>×</button><div className="card-kicker">PROPOSED ASSIGNMENT</div><h2>{selectedApp.reference || selectedApp.id.slice(0,8).toUpperCase()}</h2><p className="muted">{selectedApp.applicant_name} · {selectedApp.destination}</p><div className="trip-date-box"><span>{dateText(selectedApp.start_date)}</span><b>→</b><span>{dateText(selectedApp.end_date)}</span></div><form className="form-stack" onSubmit={createAssignment}><label>Vehicle *<select name="vehicle_id" required defaultValue=""><option value="" disabled>Select approved available vehicle</option>{vehicles.map(v => <option key={v.id} value={v.id}>{v.plate_number} · {v.brand} {v.model} · {v.seat_capacity} seats</option>)}</select></label><label>Driver *<select name="driver_id" required defaultValue=""><option value="" disabled>Select approved driver</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.full_name} · {d.email}</option>)}</select></label>{vehicles.length === 0 && <p className="alert alert-error">No approved vehicles are available in this agency.</p>}{drivers.length === 0 && <p className="alert alert-error">No approved drivers are available in this agency.</p>}<button className="btn btn-primary btn-wide" disabled={busy || !vehicles.length || !drivers.length}>Submit for Fleet Manager approval</button></form></section></div>}
     </div>
@@ -932,7 +973,7 @@ function vehiclesForFuel(rows: Row[], agencyId: string | null) {
   return rows.filter(r => r.agency_id === agencyId && r.approval_status === 'approved');
 }
 function glyphFor(view: View) {
-  const glyphs: Record<View, string> = { dashboard:'▦', agencies:'⌂', applications:'▤', vehicles:'▰', drivers:'♙', assignments:'⇄', fuel:'◉', maintenance:'⌁', users:'♧', availability:'◷', reports:'▥', notifications:'✉' };
+  const glyphs: Record<View, string> = { dashboard:'▦', agencies:'⌂', applications:'▤', vehicles:'▰', drivers:'♙', assignments:'⇄', fuel:'◉', maintenance:'⌁', users:'♧', availability:'◷', reports:'▥', notifications:'✉', audit_logs:'☷', settings:'⚙' };
   return glyphs[view];
 }
 function welcomeLine(view: View, role: Role) {
@@ -970,6 +1011,38 @@ function Dashboard({ profile, counts, onNavigate }: { profile: Profile; counts: 
   </div>;
 }
 
+
+function SystemSettings({ health, loading, error, onRefresh }: { health: Row | null; loading: boolean; error: string; onRefresh: () => void }) {
+  const state = (ready: boolean | undefined) => ready ? 'Ready' : 'Needs attention';
+  const className = (ready: boolean | undefined) => ready ? 'health-status is-ready' : 'health-status is-warning';
+  return <div className="settings-stack">
+    <section className="panel">
+      <div className="settings-heading"><div><PanelHeading title="System readiness" subtitle="Live checks from the production Supabase project. Secret values are never displayed." /></div><button className="btn btn-outline" disabled={loading} onClick={onRefresh}>{loading ? 'Checking…' : 'Refresh status'}</button></div>
+      {error && <div className="alert alert-error">{error}</div>}
+      {loading && !health && <Loading />}
+      {health && <>
+        <p className="muted">Last checked: {dateTimeText(health.checked_at)}</p>
+        <div className="health-grid">
+          <div className="health-card"><div className="health-card-icon">DB</div><div><strong>Database</strong><span className={className(health.database?.connected)}>{state(health.database?.connected)}</span><small>{health.database?.connected ? health.database.agency_count + ' agency record(s) reachable' : 'Unable to query agency registry'}</small></div></div>
+          <div className="health-card"><div className="health-card-icon">DOC</div><div><strong>Private document storage</strong><span className={className(health.storage?.private_bucket_ready)}>{state(health.storage?.private_bucket_ready)}</span><small>{health.storage?.private_bucket_ready ? 'Private FMS document bucket found' : 'Bucket fms-documents needs attention'}</small></div></div>
+          <div className="health-card"><div className="health-card-icon">@</div><div><strong>Email provider</strong><span className={className(health.integrations?.email?.ready)}>{state(health.integrations?.email?.ready)}</span><small>{health.integrations?.email?.ready ? 'Required email secrets are present' : 'Missing: ' + (health.integrations?.email?.missing || []).join(', ')}</small></div></div>
+          <div className="health-card"><div className="health-card-icon">WA</div><div><strong>WhatsApp provider</strong><span className={className(health.integrations?.whatsapp?.ready)}>{state(health.integrations?.whatsapp?.ready)}</span><small>{health.integrations?.whatsapp?.ready ? 'Required WhatsApp secrets are present; template approval still applies' : 'Missing: ' + (health.integrations?.whatsapp?.missing || []).join(', ')}</small></div></div>
+          <div className="health-card"><div className="health-card-icon">SEC</div><div><strong>Password security</strong><span className="health-status is-warning">Manual action required</span><small>{health.security?.reason || 'Enable compromised-password protection in Supabase Auth settings.'}</small></div></div>
+          <div className="health-card"><div className="health-card-icon">LOGO</div><div><strong>Official Sarawak Crest</strong><span className={className(health.branding?.official_crest_configured)}>{state(health.branding?.official_crest_configured)}</span><small>{health.branding?.reason || 'Approved crest asset has not yet been added.'}</small></div></div>
+        </div>
+      </>}
+    </section>
+    <section className="panel"><PanelHeading title="Required production setup" subtitle="These items require authorized provider or agency configuration." />
+      <ol className="settings-checklist">
+        <li><strong>Enable leaked-password protection.</strong><span>In Supabase Dashboard, open Authentication → Security / Password security and enable the option that prevents compromised passwords.</span></li>
+        <li><strong>Configure email delivery.</strong><span>Add RESEND_API_KEY and FMS_EMAIL_FROM as Edge Function secrets. Verify the sender domain in Resend first.</span></li>
+        <li><strong>Configure WhatsApp delivery.</strong><span>Add the WhatsApp Cloud API secrets, select an approved message template and send only to people who opted in.</span></li>
+        <li><strong>Add the official Sarawak State Crest.</strong><span>Provide the approved crest image file so the placeholder can be replaced without inventing or altering the emblem.</span></li>
+      </ol>
+    </section>
+  </div>;
+}
+
 function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, onCancel, onDocument, onReturn, agencies = [], currentUserId, onStatus, onRoleAgency, onMaintenanceReview, busy = false }: { rows: Row[]; kind: string; loading: boolean; role: Role; onAssign?: (r: Row) => void; onApprove?: (r: Row) => void; onReject?: (r: Row) => void; onCancel?: (r: Row) => void; onDocument?: (path: string) => void; onReturn?: (r: Row) => void; agencies?: Row[]; currentUserId?: string; onStatus?: (r: Row, action: 'suspend' | 'activate') => void; onRoleAgency?: (r: Row, event: FormEvent<HTMLFormElement>) => void; onMaintenanceReview?: (r: Row, decision: 'approve' | 'reject' | 'complete') => void; busy?: boolean }) {
   if (loading) return <Loading />;
   const columns: Record<string, {key:string;label:string}[]> = {
@@ -982,7 +1055,8 @@ function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, o
     fuel: [{key:'reporting_month',label:'Month'},{key:'purchase_date',label:'Purchase date'},{key:'odometer_reading',label:'Odometer'},{key:'litres',label:'Litres'},{key:'amount_rm',label:'Cost (RM)'},{key:'receipt_path',label:'Receipt'},{key:'status',label:'Status'}],
     maintenance: [{key:'vehicle',label:'Vehicle'},{key:'category',label:'Category'},{key:'description',label:'Description'},{key:'date_reported',label:'Reported'},{key:'workshop',label:'Workshop'},{key:'odometer_reading',label:'Odometer'},{key:'service_date',label:'Service date'},{key:'next_service_due',label:'Next service'},{key:'estimated_cost_rm',label:'Estimated RM'},{key:'actual_cost_rm',label:'Actual RM'},{key:'documents',label:'Documents'},{key:'status',label:'Status'}],
     users: [{key:'full_name',label:'Name'},{key:'role',label:'Role'},{key:'agency_id',label:'Agency ID'},{key:'status',label:'Account'}],
-    notifications: [{key:'created_at',label:'Recorded'},{key:'subject',label:'Notification'},{key:'notification_type',label:'Type'},{key:'email_status',label:'Email'},{key:'whatsapp_status',label:'WhatsApp'},{key:'sent_at',label:'Email sent'}]
+    notifications: [{key:'created_at',label:'Recorded'},{key:'subject',label:'Notification'},{key:'notification_type',label:'Type'},{key:'email_status',label:'Email'},{key:'whatsapp_status',label:'WhatsApp'},{key:'sent_at',label:'Email sent'}],
+    audit_logs: [{key:'created_at',label:'Date / time'},{key:'action',label:'Action'},{key:'entity_type',label:'Record type'},{key:'entity_id',label:'Record ID'},{key:'actor_profile_id',label:'Actor profile'},{key:'details',label:'Details'}]
   };
   const cols = kind === 'drivers' && role === 'driver' ? columns.driverDirectory
     : kind === 'notifications' && role === 'super_admin'
@@ -997,7 +1071,8 @@ function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, o
     const v = row[key];
     if (['start_date','end_date','purchase_date','date_reported','insurance_expiry','road_tax_expiry','inspection_date','next_service_due','service_date'].includes(key)) return dateText(v);
     if (['created_at','sent_at'].includes(key)) return dateTimeText(v);
-    if (['email_error','whatsapp_error'].includes(key)) return v ? String(v).slice(0, 160) : '—';
+    if (key === 'details') return v && typeof v === 'object' ? JSON.stringify(v).slice(0, 260) : v ? String(v).slice(0,260) : '—';
+    if (key === 'email_error' || key === 'whatsapp_error') return v ? String(v).slice(0, 160) : '—';
     if (key === 'amount_rm' || key === 'estimated_cost_rm' || key === 'actual_cost_rm') return v == null ? '—' : moneyText(v);
     if (key === 'role') return roleTitles[v as Role] || statusText(v);
     return v === null || v === undefined || v === '' ? '—' : String(v);
