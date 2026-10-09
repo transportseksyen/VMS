@@ -93,6 +93,17 @@ To finish deployment:
 
 If Git integration is not available, import `transportseksyen/VMS` into Vercel after connecting GitHub, with root directory `web`.
 
+### GitHub Pages fallback
+
+A workflow is also present at `.github/workflows/deploy-fms-pages.yml`. Its first run could not initialize Pages because the GitHub Actions integration does not currently have permission to create the Pages site.
+
+A repository administrator must enable Pages once:
+1. Open https://github.com/transportseksyen/VMS/settings/pages.
+2. Under **Build and deployment**, select **Deploy from a branch** only if that is the available option, then switch to **GitHub Actions** as the source. If GitHub shows a one-click Pages setup action, use it to enable Pages.
+3. Ensure the repository Actions policy permits the official GitHub Pages actions.
+4. Open https://github.com/transportseksyen/VMS/actions/workflows/deploy-fms-pages.yml and select **Run workflow**, or push a change under `web/`.
+5. Wait for the workflow to show success; its deployment output provides the actual site URL. The expected project URL format is `https://transportseksyen.github.io/VMS/`, but it is not active/verified until GitHub Pages reports a successful deployment.
+
 ## Security and production checklist
 
 - Replace the “SC” logo placeholder with an authentic, approved Sarawak State Crest asset. No crest image was supplied to this repository.
@@ -118,4 +129,6 @@ The following still require further implementation/testing before the platform c
 - End-to-end testing of assignment changes/cancellations and email delivery.
 - Final official crest asset and agency-approved privacy text.
 - Production deployment URL and real-device validation.
+- The current native iOS wrapper still points at the old OnHercules prototype URL; update it to the verified FMS production URL after deployment, then rebuild and test on real devices.
 - A signed iOS application and a final Android package are separate mobile deliverables; they must be built and tested before claiming app-store/phone distribution readiness.
+- The existing mobile wrappers are not yet verified to use the new React/Supabase FMS web app.
