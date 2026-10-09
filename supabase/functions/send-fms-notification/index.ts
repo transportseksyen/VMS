@@ -96,12 +96,75 @@ Deno.serve(async (request: Request) => {
     const applicationId = String(body?.application_id || "");
     const assignmentId = String(body?.assignment_id || "");
     const { data: actor } = await admin.from("fms_profiles").select("id,role,agency_id,status").eq("id", authData.user.id).maybeSingle();
-    if (!actor || actor.status !== "active" || !["fleet_manager","super_admin"].includes(actor.role)) return reply(403, { error: "Only authorized Fleet Managers can send decision notifications" });
-    if (!["assignment-approved","assignment-rejected","assignment-returned","assignment-cancelled"].includes(type)) return reply(400, { error: "Unsupported notification type" });
+    if (!actor || actor.status !== "active") return reply(403, { error: "An active FMS account is required" });
+    const isSubmissionNotice = type === "assignment-submitted";
+    if (isSubmissionNotice) {
+      if (!["data_entry","fleet_manager","super_admin"].includes(actor.role)) return reply(403, { error: "Only authorized fleet staff may submit assignments for review" });
+    } else if (!["fleet_manager","super_admin"].includes(actor.role)) {
+      return reply(403, { error: "Only authorized Fleet Managers can send decision notifications" });
+    }
+    if (!["assignment-approved","assignment-rejected","assignment-returned","assignment-cancelled","assignment-submitted"].includes(type)) return reply(400, { error: "Unsupported notification type" });
 
     const { data: application } = await admin.from("fms_applications").select("*").eq("id", applicationId).maybeSingle();
     if (!application) return reply(404, { error: "Application not found" });
     if (actor.role !== "super_admin" && actor.agency_id !== application.agency_id) return reply(403, { error: "Agency access denied" });
+
+    if (isSubmissionNotice) {
+      if (application.status !== "pending_manager_approval") return reply(400, { error: "Application is not waiting for Fleet Manager approval" });
+      const { data: assignments, error: assignmentError } = await admin.from("fms_assignments")
+        .select("id,driver_id,vehicle_id,start_date,end_date").eq("application_id", applicationId).eq("status","proposed");
+      if (assignmentError) return reply(503, { error: "Proposed assignments could not be checked" });
+      if (!assignments || assignments.length !== Number(application.vehicles_requested)) {
+        return reply(400, { error: "All requested vehicle assignments must be submitted before notifying reviewers" });
+      }
+      const { data: alreadyNotified } = await admin.from("fms_notifications")
+        .select("id").eq("related_table","fms_applications").eq("related_record_id",applicationId)
+        .eq("notification_type","assignment_pending_approval").limit(1);
+      if (alreadyNotified && alreadyNotified.length) return reply(200, { success:true, already_notified:true, recipients:0, statuses:[] });
+
+      const driverIds = Array.from(new Set(assignments.map((a: Record<string,any>) => a.driver_id)));
+      const vehicleIds = Array.from(new Set(assignments.map((a: Record<string,any>) => a.vehicle_id)));
+      const [{ data: driverRows }, { data: vehicleRows }] = await Promise.all([
+        admin.from("fms_drivers").select("id,full_name").in("id",driverIds),
+        admin.from("fms_vehicles").select("id,brand,model,plate_number,seat_capacity").in("id",vehicleIds)
+      ]);
+      const driverById = new Map((driverRows || []).map((item: Record<string,any>) => [item.id,item]));
+      const vehicleById = new Map((vehicleRows || []).map((item: Record<string,any>) => [item.id,item]));
+      const assignmentDetails = assignments.map((item: Record<string,any>, index: number) => {
+        const driver = driverById.get(item.driver_id);
+        const vehicle = vehicleById.get(item.vehicle_id);
+        return "<li>Vehicle " + (index + 1) + ": " + esc(vehicle?.brand || "") + " " + esc(vehicle?.model || "") +
+          " (" + esc(vehicle?.plate_number || "") + ") — Driver: " + esc(driver?.full_name || "Not found") +
+          "; seats: " + Number(vehicle?.seat_capacity || 0) + "</li>";
+      }).join("");
+      const { data: staffRows, error: staffError } = await admin.from("fms_profiles")
+        .select("id,full_name,email,role,agency_id").eq("status","active").in("role",["fleet_manager","super_admin"]);
+      if (staffError) return reply(503, { error: "Reviewer list could not be checked" });
+      const recipients = (staffRows || []).filter((staff: Record<string,any>) => staff.role === "super_admin" || staff.agency_id === application.agency_id);
+      const subject = "FMS assignment requires approval — " + application.reference;
+      const statuses = await Promise.all(recipients.map(async (staff: Record<string,any>) => {
+        const result = await sendEmail(
+          String(staff.email || ""), subject,
+          "<p>Dear " + esc(staff.full_name || "Fleet Manager") + ",</p><p>All vehicle assignments for request <strong>" + esc(application.reference) + "</strong> have been submitted and are awaiting approval.</p>" +
+          "<p><strong>Applicant:</strong> " + esc(application.applicant_name) +
+          "<br><strong>Organization:</strong> " + esc(application.applicant_agency_name) +
+          "<br><strong>Destination:</strong> " + esc(application.destination) +
+          "<br><strong>Travel dates:</strong> " + esc(application.start_date) + " to " + esc(application.end_date) +
+          "<br><strong>Passengers:</strong> " + Number(application.passenger_count) +
+          "<br><strong>Vehicles requested:</strong> " + Number(application.vehicles_requested) + "</p><ul>" + assignmentDetails +
+          "</ul><p>Sign in to FMS to approve, reject or return the application.</p><p>Fleet Management System — Sarawak</p>"
+        );
+        await admin.from("fms_notifications").insert({
+          recipient_profile_id:staff.id, recipient_email:staff.email, subject,
+          body:"Application " + application.reference + " is awaiting approval.",
+          notification_type:"assignment_pending_approval", related_table:"fms_applications", related_record_id:application.id,
+          email_status:result.status, email_error:result.error ? String(result.error).slice(0,1000) : null,
+          sent_at:result.status === "sent" ? new Date().toISOString() : null
+        });
+        return {recipient:staff.email,status:result.status};
+      }));
+      return reply(200, {success:true,recipients:recipients.length,statuses});
+    }
 
     let driver: Record<string, any> | null = null;
     let vehicle: Record<string, any> | null = null;
