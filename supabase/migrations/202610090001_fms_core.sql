@@ -314,7 +314,7 @@ create policy applications_scoped_read on public.fms_applications for select to 
 using (fms_private.current_role() in ('super_admin','fleet_manager','data_entry') and fms_private.has_agency_access(agency_id)
   or (fms_private.current_role() = 'driver' and exists (
     select 1 from public.fms_assignments a join public.fms_drivers d on d.id = a.driver_id
-    where a.application_id = applications.id and d.profile_id = (select auth.uid())
+    where a.application_id = fms_applications.id and d.profile_id = (select auth.uid())
   )));
 drop policy if exists applications_data_entry_update on public.fms_applications;
 create policy applications_data_entry_update on public.fms_applications for update to authenticated
@@ -338,16 +338,16 @@ with check (
   (fms_private.current_role() = 'super_admin' or agency_id = fms_private.current_agency_id())
   and fms_private.current_role() in ('data_entry','super_admin')
   and status = 'proposed'
-  and exists (select 1 from public.fms_applications ap where ap.id = application_id and ap.agency_id = assignments.agency_id and ap.status in ('pending_assignment','returned_for_correction'))
-  and exists (select 1 from public.fms_vehicles v where v.id = vehicle_id and v.agency_id = assignments.agency_id and v.approval_status = 'approved' and v.vehicle_status = 'active')
-  and exists (select 1 from public.fms_drivers d where d.id = driver_id and d.agency_id = assignments.agency_id and d.approval_status = 'approved' and d.account_status = 'active')
+  and exists (select 1 from public.fms_applications ap where ap.id = application_id and ap.agency_id = fms_assignments.agency_id and ap.status in ('pending_assignment','returned_for_correction'))
+  and exists (select 1 from public.fms_vehicles v where v.id = vehicle_id and v.agency_id = fms_assignments.agency_id and v.approval_status = 'approved' and v.vehicle_status = 'active')
+  and exists (select 1 from public.fms_drivers d where d.id = driver_id and d.agency_id = fms_assignments.agency_id and d.approval_status = 'approved' and d.account_status = 'active')
 );
 
 drop policy if exists fuel_scoped_read on public.fms_fuel_transactions;
 create policy fuel_scoped_read on public.fms_fuel_transactions for select to authenticated
 using (fms_private.has_agency_access(agency_id) and (
   fms_private.current_role() in ('super_admin','fleet_manager','data_entry')
-  or exists (select 1 from public.fms_drivers d where d.id = fuel_transactions.driver_id and d.profile_id = (select auth.uid()))
+  or exists (select 1 from public.fms_drivers d where d.id = fms_fuel_transactions.driver_id and d.profile_id = (select auth.uid()))
 ));
 drop policy if exists fuel_driver_insert on public.fms_fuel_transactions;
 create policy fuel_driver_insert on public.fms_fuel_transactions for insert to authenticated
