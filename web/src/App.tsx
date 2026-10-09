@@ -1193,7 +1193,7 @@ function vehiclesForFuel(rows: Row[], agencyId: string | null) {
   return rows.filter(r => r.agency_id === agencyId && r.approval_status === 'approved');
 }
 function glyphFor(view: View) {
-  const glyphs: Record<View, string> = { dashboard:'▦', agencies:'⌂', applications:'▤', vehicles:'▰', drivers:'♙', assignments:'⇄', fuel:'◉', maintenance:'⌁', users:'♧', availability:'◷', reports:'▥', notifications:'✉', audit_logs:'☷', settings:'⚙' };
+  const glyphs: Record<View, string> = { dashboard:'▦', agencies:'⌂', applications:'▤', vehicles:'▰', drivers:'♙', assignments:'⇄', fuel:'◉', maintenance:'⌁', users:'♧', availability:'◷', reports:'▥', notifications:'✉', audit_logs:'☷', change_requests:'✎', settings:'⚙' };
   return glyphs[view];
 }
 function welcomeLine(view: View, role: Role) {
