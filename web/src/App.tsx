@@ -404,6 +404,41 @@ export default function App() {
     if (updateError) setError(updateError.message); else setNotice('Availability updated.');
   }
 
+  async function createAgency(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!supabase || profile?.role !== 'super_admin') return;
+    const form = event.currentTarget;
+    const fd = new FormData(form);
+    setBusy(true); setError(''); setNotice('');
+    const { data, error: createError } = await supabase.functions.invoke('admin-users', {
+      body: { action: 'create_agency', name: String(fd.get('name') || '').trim(), code: String(fd.get('code') || '').trim() }
+    });
+    if (createError || data?.error) setError(data?.error || createError?.message || 'Could not create agency.');
+    else {
+      setNotice('Agency created. It is now available in the applicant request form.');
+      setAgencies(prev => [...prev.filter(a => a.id !== data.agency.id), data.agency].sort((a,b) => a.name.localeCompare(b.name)));
+      await loadRows('agencies');
+      form.reset();
+    }
+    setBusy(false);
+  }
+
+  async function toggleAgency(row: Row) {
+    if (!supabase || profile?.role !== 'super_admin') return;
+    const isActive = !Boolean(row.is_active);
+    const { data, error: updateError } = await supabase.functions.invoke('admin-users', {
+      body: { action: 'update_agency_status', agency_id: row.id, is_active: isActive }
+    });
+    if (updateError || data?.error) setError(data?.error || updateError?.message || 'Could not update agency.');
+    else {
+      setNotice(isActive ? 'Agency activated.' : 'Agency deactivated.');
+      setAgencies(prev => isActive
+        ? [...prev.filter(a => a.id !== data.agency.id), data.agency].sort((a,b) => a.name.localeCompare(b.name))
+        : prev.filter(a => a.id !== data.agency.id));
+      await loadRows('agencies');
+    }
+  }
+
   async function approveStaff(row: Row) {
     if (!supabase) return;
     setError(''); setNotice('');
