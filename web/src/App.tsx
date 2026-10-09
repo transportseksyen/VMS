@@ -152,10 +152,19 @@ export default function App() {
 
   async function loadRows(target: View) {
     if (!supabase) return;
-    const table = target === 'drivers' && profile?.role === 'driver' ? 'fms_driver_directory' : tableByView[target];
+    const isDriverDirectory = target === 'drivers' && profile?.role === 'driver';
+    const table = tableByView[target];
     if (!table) return;
     setLoading(true);
     setError('');
+    if (isDriverDirectory) {
+      void supabase.rpc('fms_driver_directory' as any).then(({ data, error: directoryError }: any) => {
+        if (directoryError) setError(directoryError.message);
+        setRows((data || []).slice(0, 100));
+        setLoading(false);
+      });
+      return;
+    }
     let query: any = supabase.from(table).select('*');
     if (target === 'maintenance') {
       query = supabase.from('fms_maintenance_records').select('*,documents:fms_maintenance_documents(id,document_type,file_path,original_file_name)');
@@ -163,8 +172,7 @@ export default function App() {
     if (target === 'assignments') {
       query = supabase.from('fms_assignments').select('*,applications:fms_applications(reference,applicant_name,destination),vehicles:fms_vehicles(brand,model,plate_number),drivers:fms_drivers(full_name)');
     }
-    const orderedQuery = target === 'drivers' && profile?.role === 'driver' ? query.order('full_name', { ascending: true }) : query.order('created_at', { ascending: false });
-    const { data, error: queryError } = await orderedQuery.limit(100);
+    const { data, error: queryError } = await query.order('created_at', { ascending: false }).limit(100);
     if (queryError) setError(queryError.message);
     setRows(data || []);
     setLoading(false);
