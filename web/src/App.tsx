@@ -441,14 +441,153 @@ export default function App() {
     await Promise.all([loadRows('applications'), loadRows('assignments'), loadCounts()]);
   }
 
-  async function approveRegistryRecord(table: 'vehicles' | 'drivers', row: Row) {
-    if (!supabase) return;
-    setError(''); setNotice('');
-    const rpc = table === 'vehicles' ? 'fms_approve_vehicle' : 'fms_approve_driver';
-    const arg = table === 'vehicles' ? 'p_vehicle_id' : 'p_driver_id';
-    const { error: updateError } = await supabase.rpc(rpc as any, { [arg]: row.id } as any);
-    if (updateError) setError(updateError.message);
-    else { setNotice('Record approved.'); await loadRows(view); }
+  async function reviewRegistryRecord(table: 'vehicles' | 'drivers', row: Row, decision: 'approve' | 'reject' | 'return') {
+    if (!supabase || !profile || !['fleet_manager','super_admin'].includes(profile.role)) return;
+    let reason = '';
+    if (decision !== 'approve') {
+      const entered = window.prompt(decision === 'reject' ? 'Enter a rejection reason:' : 'Enter correction instructions:');
+      if (!entered || entered.trim().length < 3) return;
+      reason = entered.trim();
+    }
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const entityType = table === 'vehicles' ? 'vehicle' : 'driver';
+      const { data, error: reviewError } = await supabase.rpc('fms_review_registry_record' as any, {
+        p_entity_type: entityType,
+        p_entity_id: row.id,
+        p_decision: decision,
+        p_reason: reason || null
+      } as any);
+      if (reviewError || data?.error || data?.success === false) {
+        setError(data?.error || reviewError?.message || 'Registry decision could not be saved.');
+        return;
+      }
+      const notification = await supabase.functions.invoke('send-fms-notification', {
+        body: { type: 'registry-record-reviewed', entity_type: entityType, entity_id: row.id, decision, reason }
+      });
+      const decisionLabel = decision === 'approve' ? 'approved' : decision === 'reject' ? 'rejected' : 'returned for correction';
+      setNotice(notification.error || notification.data?.success !== true
+        ? 'Record ' + decisionLabel + '. The decision is saved, but the email notification could not be confirmed.'
+        : 'Record ' + decisionLabel + '. Creator email: ' + (notification.data?.emailStatus || 'unknown') + '.');
+      await Promise.all([loadRows(table), loadRows('notifications'), loadRows('audit_logs'), loadCounts()]);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Registry decision could not be saved.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitRegistryEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!supabase || !profile || !registryEdit) return;
+    const { kind, row } = registryEdit;
+    const form = event.currentTarget;
+    const fd = new FormData(form);
+    const reason = String(fd.get('change_reason') || '').trim();
+    if (reason.length < 3) { setError('Provide a reason of at least 3 characters.'); return; }
+
+    const fields: Row = kind === 'vehicles' ? {
+      brand: String(fd.get('brand') || '').trim(),
+      model: String(fd.get('model') || '').trim(),
+      vehicle_type: String(fd.get('vehicle_type') || '').trim(),
+      plate_number: String(fd.get('plate_number') || '').trim().toUpperCase(),
+      seat_capacity: Number(fd.get('seat_capacity')),
+      mileage_km: Number(fd.get('mileage_km')),
+      insurance_expiry: String(fd.get('insurance_expiry') || '') || null,
+      road_tax_expiry: String(fd.get('road_tax_expiry') || '') || null,
+      inspection_date: String(fd.get('inspection_date') || '') || null,
+      next_service_due: String(fd.get('next_service_due') || '') || null,
+      remarks: String(fd.get('remarks') || '').trim() || null
+    } : {
+      full_name: String(fd.get('full_name') || '').trim(),
+      email: String(fd.get('email') || '').trim().toLowerCase(),
+      phone: String(fd.get('phone') || '').trim(),
+      emergency_contact_name: String(fd.get('emergency_contact_name') || '').trim() || null,
+      emergency_contact_phone: String(fd.get('emergency_contact_phone') || '').trim() || null
+    };
+    if (kind === 'vehicles' && (!fields.brand || !fields.model || !fields.vehicle_type || !fields.plate_number ||
+      !Number.isInteger(fields.seat_capacity) || fields.seat_capacity < 1 || !Number.isFinite(fields.mileage_km) || fields.mileage_km < 0)) {
+      setError('Enter valid vehicle details, seat capacity and mileage.'); return;
+    }
+    if (kind === 'drivers' && (!fields.full_name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email))) {
+      setError('Enter a driver name and valid email address.'); return;
+    }
+    setBusy(true); setError(''); setNotice('');
+    try {
+      if (row.approval_status === 'approved') {
+        const { data, error: submitError } = await supabase.rpc('fms_submit_registry_change' as any, {
+          p_entity_type: kind === 'vehicles' ? 'vehicle' : 'driver',
+          p_entity_id: row.id,
+          p_changes: fields,
+          p_reason: reason
+        } as any);
+        if (submitError || data?.error || data?.success === false) {
+          setError(data?.error || submitError?.message || 'Change request could not be submitted.');
+          return;
+        }
+        const notification = await supabase.functions.invoke('send-fms-notification', {
+          body: { type: 'registry-change-submitted', change_request_id: data.request_id }
+        });
+        setNotice(notification.error || notification.data?.success !== true
+          ? 'Change request submitted for review, but reviewer email could not be confirmed.'
+          : 'Change request submitted. Reviewer notification results have been recorded.');
+      } else {
+        if (!['data_entry','fleet_manager'].includes(profile.role) || profile.agency_id !== row.agency_id ||
+            !['pending','returned'].includes(row.approval_status)) {
+          setError('This record must be edited through the approved change-request workflow.');
+          return;
+        }
+        const { error: updateError } = await supabase.from(kind === 'vehicles' ? 'fms_vehicles' : 'fms_drivers')
+          .update({ ...fields, approval_status: 'pending', decision_reason: null, updated_at: new Date().toISOString() })
+          .eq('id', row.id).eq('agency_id', profile.agency_id).in('approval_status', ['pending','returned']);
+        if (updateError) { setError(updateError.message); return; }
+        const notification = await supabase.functions.invoke('send-fms-notification', {
+          body: { type: 'registry-record-submitted', entity_type: kind === 'vehicles' ? 'vehicle' : 'driver', entity_id: row.id }
+        });
+        setNotice(notification.error || notification.data?.success !== true
+          ? 'Changes saved and resubmitted for approval, but reviewer email could not be confirmed.'
+          : 'Changes saved and resubmitted for Fleet Manager approval.');
+      }
+      setRegistryEdit(null);
+      await Promise.all([loadRows(kind), loadRows('change_requests'), loadRows('notifications'), loadCounts()]);
+      form.reset();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Registry change could not be submitted.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reviewRegistryChange(row: Row, decision: 'approve' | 'reject' | 'return') {
+    if (!supabase || !profile || !['fleet_manager','super_admin'].includes(profile.role)) return;
+    let reason = '';
+    if (decision !== 'approve') {
+      const entered = window.prompt(decision === 'reject' ? 'Enter a reason for rejecting this change:' : 'Enter the correction required:');
+      if (!entered || entered.trim().length < 3) return;
+      reason = entered.trim();
+    }
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const { data, error: reviewError } = await supabase.rpc('fms_review_registry_change' as any, {
+        p_change_request_id: row.id, p_decision: decision, p_reason: reason || null
+      } as any);
+      if (reviewError || data?.error || data?.success === false) {
+        setError(data?.error || reviewError?.message || 'Registry change decision could not be saved.');
+        return;
+      }
+      const notification = await supabase.functions.invoke('send-fms-notification', {
+        body: { type: 'registry-change-reviewed', change_request_id: row.id, decision, reason }
+      });
+      const label = decision === 'approve' ? 'approved' : decision === 'reject' ? 'rejected' : 'returned for correction';
+      setNotice(notification.error || notification.data?.success !== true
+        ? 'Registry change ' + label + '. The decision is saved, but requester email could not be confirmed.'
+        : 'Registry change ' + label + '. Requester email: ' + (notification.data?.emailStatus || 'unknown') + '.');
+      await Promise.all([loadRows('change_requests'), loadRows(row.entity_type === 'vehicle' ? 'vehicles' : 'drivers'), loadRows('notifications'), loadRows('audit_logs')]);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Registry change decision could not be saved.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function saveVehicle(event: FormEvent<HTMLFormElement>) {
