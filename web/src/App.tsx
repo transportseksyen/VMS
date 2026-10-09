@@ -313,13 +313,15 @@ export default function App() {
     const notification = await supabase.functions.invoke('send-fms-notification', {
       body: { type: notificationType, application_id: row.application_id, assignment_id: row.id, reason }
     });
-    if (notification.error || notification.data?.applicantEmailStatus === 'not_configured') {
-      setNotice('Decision saved. Email/WhatsApp delivery needs provider configuration or opt-in.');
+    const actionLabel = decision === 'approve' ? 'approved' : decision === 'reject' ? 'rejected' : 'cancelled';
+    if (notification.error) {
+      setNotice('Assignment ' + actionLabel + '. The decision was saved, but the notification service could not be reached.');
     } else {
       const applicantEmail = notification.data?.applicantEmailStatus || 'not_applicable';
       const applicantWhatsApp = notification.data?.applicantWhatsAppStatus || 'not_applicable';
-      const actionLabel = decision === 'approve' ? 'approved' : decision === 'reject' ? 'rejected' : 'cancelled';
-      setNotice('Assignment ' + actionLabel + '. Applicant email: ' + applicantEmail + '; WhatsApp: ' + applicantWhatsApp + '.');
+      const driverEmail = notification.data?.driverEmailStatus || 'not_applicable';
+      const driverWhatsApp = notification.data?.driverWhatsAppStatus || 'not_applicable';
+      setNotice('Assignment ' + actionLabel + '. Applicant — email: ' + applicantEmail + ', WhatsApp: ' + applicantWhatsApp + '. Driver — email: ' + driverEmail + ', WhatsApp: ' + driverWhatsApp + '.');
     }
     await loadRows('assignments');
     await loadCounts();
