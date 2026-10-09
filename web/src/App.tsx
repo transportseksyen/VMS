@@ -135,7 +135,7 @@ export default function App() {
     setError('');
     let query: any = supabase.from(table).select('*');
     if (target === 'assignments') {
-      query = supabase.from('fms_assignments').select('*,applications(reference,applicant_name,destination),vehicles(brand,model,plate_number),drivers(full_name)');
+      query = supabase.from('fms_assignments').select('*,applications:fms_applications(reference,applicant_name,destination),vehicles:fms_vehicles(brand,model,plate_number),drivers:fms_drivers(full_name)');
     }
     const { data, error: queryError } = await query.order('created_at', { ascending: false }).limit(100);
     if (queryError) setError(queryError.message);
