@@ -32,6 +32,34 @@ Deno.serve(async (request: Request) => {
   try {
     const body = await request.json();
     const action = String(body?.action || "");
+    if (action === "create_agency" || action === "update_agency_status") {
+      if (actor.role !== "super_admin") return reply(403, { error: "Only the Super Admin can manage agencies" });
+      if (action === "create_agency") {
+        const name = String(body.name || "").trim();
+        const code = String(body.code || "").trim().toUpperCase();
+        if (name.length < 2 || name.length > 180) return reply(400, { error: "Agency name must be between 2 and 180 characters" });
+        if (code && !/^[A-Z0-9_-]{2,16}$/.test(code)) return reply(400, { error: "Agency code may use 2–16 letters, numbers, hyphens or underscores" });
+        const { data: agency, error: createError } = await callerClient.from("fms_agencies")
+          .insert({ name, code: code || null, is_active: true }).select("id,name,code,is_active").single();
+        if (createError || !agency) return reply(400, { error: createError?.message || "Could not create agency" });
+        await callerClient.from("fms_audit_logs").insert({
+          actor_profile_id: actor.id, agency_id: agency.id, action: "create_agency",
+          entity_type: "agency", entity_id: agency.id, details: { name: agency.name, code: agency.code }
+        });
+        return reply(200, { success: true, agency });
+      }
+      const agencyId = String(body.agency_id || "");
+      const isActive = Boolean(body.is_active);
+      const { data: agency, error: agencyError } = await callerClient.from("fms_agencies")
+        .update({ is_active: isActive }).eq("id", agencyId).select("id,name,code,is_active").maybeSingle();
+      if (agencyError || !agency) return reply(400, { error: agencyError?.message || "Agency not found" });
+      await callerClient.from("fms_audit_logs").insert({
+        actor_profile_id: actor.id, agency_id: agency.id, action: "update_agency_status",
+        entity_type: "agency", entity_id: agency.id, details: { is_active: isActive }
+      });
+      return reply(200, { success: true, agency });
+    }
+
     if (action === "invite") {
       const email = String(body.email || "").trim().toLowerCase();
       const fullName = String(body.full_name || "").trim();
