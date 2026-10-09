@@ -271,3 +271,5 @@ td:first-child { color: #253a56; font-weight: 700; }
   .public-footer span:nth-child(2) { display: none; }
   .top-actions .btn { padding: 9px; font-size: 10px; }
 }
+
+.success-text { color: #287250; background: #e7f6ee; border: 1px solid #ccead9; border-radius: 8px; padding: 10px 12px; font-size: 11px; line-height: 1.5; }
