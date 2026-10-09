@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase, supabaseConfigured } from './lib/supabase';
 
@@ -49,6 +49,7 @@ export default function App() {
   const [selectedApp, setSelectedApp] = useState<Row | null>(null);
   const [vehicles, setVehicles] = useState<Row[]>([]);
   const [drivers, setDrivers] = useState<Row[]>([]);
+  const [fuelVehicles, setFuelVehicles] = useState<Row[]>([]);
 
   useEffect(() => {
     if (!supabase) return;
@@ -76,6 +77,18 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (supabase && profile && view === 'fuel' && profile.role === 'driver') {
+      void (async () => {
+        const { data: driverRow } = await supabase.from('drivers').select('id').eq('profile_id', profile.id).maybeSingle();
+        if (!driverRow) { setFuelVehicles([]); return; }
+        const { data } = await supabase.from('assignments')
+          .select('vehicle_id,vehicles(id,brand,model,plate_number)')
+          .eq('driver_id', driverRow.id).eq('status', 'approved');
+        const unique = new Map<string, Row>();
+        (data || []).forEach((item: any) => { if (item.vehicles?.id) unique.set(item.vehicles.id, item.vehicles); });
+        setFuelVehicles(Array.from(unique.values()));
+      })();
+    }
     if (profile && view !== 'dashboard' && view !== 'availability' && view !== 'reports') {
       void loadRows(view);
     } else {
@@ -88,7 +101,7 @@ export default function App() {
     if (!supabase) return;
     const { data, error: profileError } = await supabase.from('profiles')
       .select('id,full_name,role,agency_id,status').eq('id', userId).maybeSingle();
-    if (profileError || !data) {
+    if (profileError || !data || data.status !== 'active') {
       setProfile(null);
       setProfileMissing(true);
       if (profileError) setError(profileError.message);
@@ -158,46 +171,59 @@ export default function App() {
       setBusy(false); return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      setError('PDF must be 5 MB or smaller.'); setBusy(false); return;
+      setError('PDF must be 5 MB or smaller.');
+      setBusy(false); return;
     }
     if (!startDate || !endDate || endDate < startDate) {
       setError('The end date must be the same as or later than the start date.');
       setBusy(false); return;
     }
-    const appId = crypto.randomUUID();
-    const path = 'incoming/' + appId + '.pdf';
-    const { error: uploadError } = await supabase.storage.from('fms-documents').upload(path, file, {
-      contentType: 'application/pdf', upsert: false
-    });
-    if (uploadError) {
-      setError('Document upload failed: ' + uploadError.message);
-      setBusy(false); return;
+    try {
+      const application = {
+        agency_id: String(fd.get('fleet_agency_id') || ''),
+        applicant_name: String(fd.get('applicant_name') || '').trim(),
+        applicant_agency_name: String(fd.get('applicant_agency_name') || '').trim(),
+        email: String(fd.get('email') || '').trim(),
+        phone: String(fd.get('phone') || '').trim(),
+        passenger_count: Number(fd.get('passenger_count')),
+        vehicles_requested: Number(fd.get('vehicles_requested')),
+        passenger_names: String(fd.get('passenger_names') || '').trim(),
+        destination: String(fd.get('destination') || '').trim(),
+        hotel_provided: String(fd.get('hotel_provided') || 'no') === 'yes',
+        start_date: startDate,
+        end_date: endDate
+      };
+      const base64 = await readFileAsBase64(file);
+      const { data, error: submitError } = await supabase.functions.invoke('submit-application', {
+        body: { application, fileName: file.name, fileBase64: base64 }
+      });
+      if (submitError) {
+        setError('Application could not be submitted: ' + submitError.message);
+      } else if (data?.success) {
+        const emailNote = data.emailStatus === 'sent'
+          ? ' An acknowledgement email was sent.'
+          : ' Email acknowledgement is pending configuration by the administrator.';
+        setNotice('Application submitted successfully. Reference: ' + data.reference + '.' + emailNote);
+        form.reset();
+      } else {
+        setError(data?.error || 'Application could not be submitted.');
+      }
+    } catch (submitException) {
+      setError(submitException instanceof Error ? submitException.message : 'Unexpected submission error.');
     }
-    const record = {
-      id: appId,
-      agency_id: String(fd.get('fleet_agency_id') || ''),
-      applicant_name: String(fd.get('applicant_name') || '').trim(),
-      applicant_agency_name: String(fd.get('applicant_agency_name') || '').trim(),
-      email: String(fd.get('email') || '').trim(),
-      phone: String(fd.get('phone') || '').trim(),
-      passenger_count: Number(fd.get('passenger_count')),
-      vehicles_requested: Number(fd.get('vehicles_requested')),
-      passenger_names: String(fd.get('passenger_names') || '').trim(),
-      destination: String(fd.get('destination') || '').trim(),
-      hotel_provided: String(fd.get('hotel_provided') || 'no') === 'yes',
-      start_date: startDate,
-      end_date: endDate,
-      document_path: path
-    };
-    const { error: insertError } = await supabase.from('applications').insert(record);
-    if (insertError) {
-      await supabase.storage.from('fms-documents').remove([path]);
-      setError('Application could not be saved: ' + insertError.message);
-      setBusy(false); return;
-    }
-    setNotice('Application submitted successfully. Your reference is ' + appId.slice(0, 8).toUpperCase() + '. Email notification must be configured on the server before production.');
-    form.reset();
     setBusy(false);
+  }
+
+  async function readFileAsBase64(file: File): Promise<string> {
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        resolve(result.includes(',') ? result.slice(result.indexOf(',') + 1) : '');
+      };
+      reader.onerror = () => reject(new Error('The selected file could not be read.'));
+      reader.readAsDataURL(file);
+    });
   }
 
   async function beginAssignment(app: Row) {
@@ -239,20 +265,37 @@ export default function App() {
   async function decideAssignment(row: Row, decision: 'approve' | 'reject') {
     if (!supabase) return;
     setError(''); setNotice('');
-    let result;
+    let result: any;
+    let reason = '';
     if (decision === 'approve') {
       result = await supabase.rpc('approve_assignment', { p_assignment_id: row.id });
     } else {
-      const reason = window.prompt('Enter a rejection reason:');
-      if (!reason || !reason.trim()) return;
-      result = await supabase.rpc('reject_assignment', { p_assignment_id: row.id, p_reason: reason.trim() });
+      const enteredReason = window.prompt('Enter a rejection reason:');
+      if (!enteredReason || !enteredReason.trim()) return;
+      reason = enteredReason.trim();
+      result = await supabase.rpc('reject_assignment', { p_assignment_id: row.id, p_reason: reason });
     }
-    if (result.error) setError(result.error.message);
-    else {
-      setNotice(decision === 'approve' ? 'Assignment approved and added to monitoring.' : 'Assignment rejected and returned to the application history.');
-      await loadRows('assignments');
-      await loadCounts();
+    if (result.error) {
+      setError(result.error.message);
+      return;
     }
+    const notification = await supabase.functions.invoke('send-fms-notification', {
+      body: {
+        type: decision === 'approve' ? 'assignment-approved' : 'assignment-rejected',
+        application_id: row.application_id,
+        assignment_id: row.id,
+        reason
+      }
+    });
+    if (notification.error || notification.data?.applicantEmailStatus === 'not_configured') {
+      setNotice('Decision saved successfully. Email notifications still need provider configuration.');
+    } else if (notification.data?.applicantEmailStatus === 'failed') {
+      setNotice('Decision saved. The email service reported a delivery error; check notification logs.');
+    } else {
+      setNotice(decision === 'approve' ? 'Assignment approved and added to monitoring. Notification status: ' + (notification.data?.applicantEmailStatus || 'submitted') + '.' : 'Assignment rejected. Applicant notification status: ' + (notification.data?.applicantEmailStatus || 'submitted') + '.');
+    }
+    await loadRows('assignments');
+    await loadCounts();
   }
 
   async function approveRegistryRecord(table: 'vehicles' | 'drivers', row: Row) {
@@ -266,8 +309,9 @@ export default function App() {
 
   async function saveVehicle(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     if (!supabase || !profile?.agency_id) return;
-    const fd = new FormData(event.currentTarget);
+    const fd = new FormData(form);
     const record = {
       agency_id: profile.agency_id, brand: String(fd.get('brand') || '').trim(),
       model: String(fd.get('model') || '').trim(), vehicle_type: String(fd.get('vehicle_type') || ''),
@@ -277,13 +321,14 @@ export default function App() {
     };
     const { error: saveError } = await supabase.from('vehicles').insert(record);
     if (saveError) setError(saveError.message);
-    else { setNotice('Vehicle saved and submitted for approval.'); await loadRows('vehicles'); event.currentTarget.reset(); }
+    else { setNotice('Vehicle saved and submitted for approval.'); await loadRows('vehicles'); form.reset(); }
   }
 
   async function saveDriver(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     if (!supabase || !profile?.agency_id) return;
-    const fd = new FormData(event.currentTarget);
+    const fd = new FormData(form);
     const record = {
       agency_id: profile.agency_id, full_name: String(fd.get('full_name') || '').trim(),
       email: String(fd.get('email') || '').trim(), phone: String(fd.get('phone') || '').trim(),
@@ -294,22 +339,28 @@ export default function App() {
     };
     const { error: saveError } = await supabase.from('drivers').insert(record);
     if (saveError) setError(saveError.message);
-    else { setNotice('Driver saved and submitted for approval.'); await loadRows('drivers'); event.currentTarget.reset(); }
+    else { setNotice('Driver saved and submitted for approval.'); await loadRows('drivers'); form.reset(); }
   }
 
   async function saveFuel(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     if (!supabase || !profile?.agency_id) return;
-    const fd = new FormData(event.currentTarget);
+    const fd = new FormData(form);
     const receipt = fd.get('receipt') as File | null;
-    if (!receipt || receipt.size > 5 * 1024 * 1024) { setError('Select a receipt no larger than 5 MB.'); return; }
+    if (!receipt || receipt.size < 1 || receipt.size > 5 * 1024 * 1024) { setError('Select a receipt no larger than 5 MB.'); return; }
+    const allowedTypes = ['application/pdf','image/jpeg','image/png'];
+    if (!allowedTypes.includes(receipt.type)) { setError('Receipt must be a PDF, JPG or PNG.'); return; }
     const vehicleId = String(fd.get('vehicle_id') || '');
-    const path = profile.agency_id + '/fuel/' + crypto.randomUUID() + '-' + receipt.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const { data: driverRecord, error: driverError } = await supabase.from('drivers').select('id').eq('profile_id', profile.id).maybeSingle();
+    if (driverError || !driverRecord) { setError('Your driver profile is not linked. Contact the Data Entry user or Fleet Manager.'); return; }
+    const safeFileName = receipt.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = profile.agency_id + '/fuel/' + driverRecord.id + '/' + crypto.randomUUID() + '-' + safeFileName;
     setBusy(true); setError('');
-    const { error: uploadError } = await supabase.storage.from('fms-documents').upload(path, receipt, { upsert: false });
+    const { error: uploadError } = await supabase.storage.from('fms-documents').upload(path, receipt, { contentType: receipt.type, upsert: false });
     if (uploadError) { setError(uploadError.message); setBusy(false); return; }
     const { error: insertError } = await supabase.from('fuel_transactions').insert({
-      agency_id: profile.agency_id, driver_id: profile.id, vehicle_id: vehicleId,
+      agency_id: profile.agency_id, driver_id: driverRecord.id, vehicle_id: vehicleId,
       reporting_month: String(fd.get('reporting_month') || ''),
       purchase_date: String(fd.get('purchase_date') || ''),
       odometer_reading: Number(fd.get('odometer_reading')),
@@ -317,14 +368,15 @@ export default function App() {
       receipt_path: path, status: 'submitted'
     });
     if (insertError) { await supabase.storage.from('fms-documents').remove([path]); setError(insertError.message); }
-    else { setNotice('Fuel transaction submitted with receipt.'); await loadRows('fuel'); event.currentTarget.reset(); }
+    else { setNotice('Fuel transaction submitted with receipt.'); await loadRows('fuel'); form.reset(); }
     setBusy(false);
   }
 
   async function saveMaintenance(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     if (!supabase || !profile?.agency_id) return;
-    const fd = new FormData(event.currentTarget);
+    const fd = new FormData(form);
     const record = {
       agency_id: profile.agency_id, vehicle_id: String(fd.get('vehicle_id') || ''),
       category: String(fd.get('category') || ''), description: String(fd.get('description') || '').trim(),
@@ -333,7 +385,7 @@ export default function App() {
     };
     const { error: saveError } = await supabase.from('maintenance_records').insert(record);
     if (saveError) setError(saveError.message);
-    else { setNotice('Maintenance record submitted. Add its supporting documents from the record review screen when enabled.'); await loadRows('maintenance'); event.currentTarget.reset(); }
+    else { setNotice('Maintenance record submitted. Add its supporting documents from the record review screen when enabled.'); await loadRows('maintenance'); form.reset(); }
   }
 
   async function setAvailability(event: FormEvent<HTMLFormElement>) {
@@ -344,6 +396,26 @@ export default function App() {
       .update({ availability_status: String(fd.get('availability_status')), availability_start: fd.get('availability_start') || null, availability_end: fd.get('availability_end') || null, availability_remarks: fd.get('availability_remarks') || null })
       .eq('profile_id', profile.id);
     if (updateError) setError(updateError.message); else setNotice('Availability updated.');
+  }
+
+  async function inviteUser(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!supabase || !profile) return;
+    const form = event.currentTarget;
+    const fd = new FormData(form);
+    setBusy(true); setError(''); setNotice('');
+    const { data, error: inviteError } = await supabase.functions.invoke('admin-users', {
+      body: {
+        action: 'invite',
+        full_name: String(fd.get('full_name') || '').trim(),
+        email: String(fd.get('email') || '').trim(),
+        role: String(fd.get('role') || ''),
+        agency_id: String(fd.get('agency_id') || '') || null
+      }
+    });
+    if (inviteError || data?.error) setError(data?.error || inviteError?.message || 'Invitation failed.');
+    else { setNotice('Invitation sent. The new staff account must follow the email invitation.'); form.reset(); await loadRows('users'); }
+    setBusy(false);
   }
 
   if (!supabaseConfigured || !supabase) {
@@ -441,10 +513,10 @@ export default function App() {
           {view === 'vehicles' && <><section className="panel"><PanelHeading title="Vehicle registry" subtitle="Approved vehicle records are eligible for assignments." />{loading ? <Loading /> : <DataTable rows={rows} kind="vehicles" loading={loading} role={profile.role} onApprove={r => void approveRegistryRecord('vehicles', r)} />}</section>{canEditRegistry && <section className="panel form-panel"><PanelHeading title="Register a vehicle" subtitle="New and changed records are submitted for Fleet Manager approval." /><form className="form-grid" onSubmit={saveVehicle}><label>Brand *<input name="brand" required /></label><label>Model *<input name="model" required /></label><label>Vehicle type *<select name="vehicle_type" required><option value="">Choose type</option><option>Sedan</option><option>SUV</option><option>MPV</option><option>Van</option><option>4x4 / Pickup</option><option>Bus</option><option>Other</option></select></label><label>Registration number *<input name="plate_number" required /></label><label>Seat capacity *<input name="seat_capacity" type="number" min="1" max="100" defaultValue="5" required /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Submit for approval</button></div></form></section>}</>}
           {view === 'drivers' && <><section className="panel"><PanelHeading title="Driver directory" subtitle="Driver records require Fleet Manager approval before assignment." />{loading ? <Loading /> : <DataTable rows={rows} kind="drivers" loading={loading} role={profile.role} onApprove={r => void approveRegistryRecord('drivers', r)} />}</section>{canEditRegistry && <section className="panel form-panel"><PanelHeading title="Register a driver" subtitle="Emergency contact details are restricted to authorized staff." /><form className="form-grid" onSubmit={saveDriver}><label>Driver name *<input name="full_name" required /></label><label>Email address *<input name="email" type="email" required /></label><label>Phone number *<input name="phone" required /></label><label>Emergency contact name<input name="emergency_contact_name" /></label><label>Emergency contact phone<input name="emergency_contact_phone" /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Submit for approval</button></div></form></section>}</>}
           {view === 'assignments' && <section className="panel"><PanelHeading title="Assignment monitoring" subtitle="Confirmed trips are created only after Fleet Manager approval." /><DataTable rows={rows} kind="assignments" loading={loading} role={profile.role} onApprove={r => void decideAssignment(r, 'approve')} onReject={r => void decideAssignment(r, 'reject')} /><div className="panel-foot">Date conflicts must be checked by the database approval function before an assignment can become confirmed.</div></section>}
-          {view === 'fuel' && <><section className="panel"><PanelHeading title="Fuel transactions" subtitle="Drivers submit a receipt for each purchase. Monthly totals are calculated from saved transactions." />{loading ? <Loading /> : <DataTable rows={rows} kind="fuel" loading={loading} role={profile.role} />}</section>{isDriver && <section className="panel form-panel"><PanelHeading title="Submit a fuel transaction" subtitle="Upload a readable receipt photo or PDF. Maximum file size: 5 MB." /><form className="form-grid" onSubmit={saveFuel}><label>Vehicle *<select name="vehicle_id" required defaultValue=""><option value="" disabled>Select vehicle</option>{vehiclesForFuel(rows, profile.agency_id).map(v => <option value={v.id} key={v.id}>{v.plate_number} · {v.brand} {v.model}</option>)}</select></label><label>Reporting month *<input name="reporting_month" type="month" required /></label><label>Purchase date *<input name="purchase_date" type="date" required /></label><label>Odometer (km) *<input name="odometer_reading" type="number" min="0" required /></label><label>Litres *<input name="litres" type="number" min="0.01" step="0.01" required /></label><label>Total cost (RM) *<input name="amount_rm" type="number" min="0.01" step="0.01" required /></label><label className="full-width">Receipt *<input name="receipt" type="file" accept="image/*,.pdf,application/pdf" required /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Submit fuel transaction</button></div></form></section>}</>}
+          {view === 'fuel' && <><section className="panel"><PanelHeading title="Fuel transactions" subtitle="Drivers submit a receipt for each purchase. Monthly totals are calculated from saved transactions." />{loading ? <Loading /> : <DataTable rows={rows} kind="fuel" loading={loading} role={profile.role} />}</section>{isDriver && <section className="panel form-panel"><PanelHeading title="Submit a fuel transaction" subtitle="Upload a readable receipt photo or PDF. Maximum file size: 5 MB." /><form className="form-grid" onSubmit={saveFuel}><label>Vehicle *<select name="vehicle_id" required defaultValue=""><option value="" disabled>Select vehicle</option>{fuelVehicles.map(v => <option value={v.id} key={v.id}>{v.plate_number} · {v.brand} {v.model}</option>)}</select></label><label>Reporting month *<input name="reporting_month" type="month" required /></label><label>Purchase date *<input name="purchase_date" type="date" required /></label><label>Odometer (km) *<input name="odometer_reading" type="number" min="0" required /></label><label>Litres *<input name="litres" type="number" min="0.01" step="0.01" required /></label><label>Total cost (RM) *<input name="amount_rm" type="number" min="0.01" step="0.01" required /></label><label className="full-width">Receipt *<input name="receipt" type="file" accept="image/*,.pdf,application/pdf" required /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Submit fuel transaction</button></div></form></section>}</>}
           {view === 'maintenance' && <><section className="panel"><PanelHeading title="Maintenance records" subtitle="Track vehicle servicing and supporting documents." />{loading ? <Loading /> : <DataTable rows={rows} kind="maintenance" loading={loading} role={profile.role} />}</section>{canEditRegistry && <section className="panel form-panel"><PanelHeading title="Create maintenance record" subtitle="Add a record before attaching the quotation, request, service order and invoice." /><form className="form-grid" onSubmit={saveMaintenance}><label>Vehicle ID *<input name="vehicle_id" required placeholder="Paste approved vehicle ID" /></label><label>Category *<select name="category" required><option value="">Choose category</option><option>Scheduled service</option><option>Repair</option><option>Tyres</option><option>Accident damage</option><option>Inspection</option><option>Other</option></select></label><label>Date reported *<input name="date_reported" type="date" required /></label><label>Description *<input name="description" required /></label><label className="full-width">Remarks<textarea name="remarks" rows={2} /></label><div className="form-action"><button className="btn btn-primary">Submit maintenance record</button></div></form></section>}</>}
           {view === 'availability' && <section className="panel form-panel"><PanelHeading title="My availability" subtitle="Update your expected leave, course or unavailability period." /><form className="form-grid" onSubmit={setAvailability}><label>Status *<select name="availability_status" required><option value="available">Available</option><option value="on_leave">On leave</option><option value="on_course">On course</option><option value="unavailable">Unavailable</option></select></label><label>Start date<input name="availability_start" type="date" /></label><label>End date<input name="availability_end" type="date" /></label><label className="full-width">Remarks<textarea name="availability_remarks" rows={3} /></label><div className="form-action"><button className="btn btn-primary">Update availability</button></div></form></section>}
-          {view === 'users' && <section className="panel"><PanelHeading title="User management" subtitle="Staff accounts must be provisioned through the trusted admin function." /><DataTable rows={rows} kind="users" loading={loading} role={profile.role} /><div className="panel-foot">To avoid exposing privileged credentials, account creation and role changes are handled by a server-side admin function, not by this browser.</div></section>}
+          {view === 'users' && <><section className="panel"><PanelHeading title="Staff directory" subtitle="View accounts visible within your authorized scope." /><DataTable rows={rows} kind="users" loading={loading} role={profile.role} /></section><section className="panel form-panel"><PanelHeading title="Invite a staff user" subtitle="An invitation email will be sent. Role and agency permissions are validated server-side." /><form className="form-grid" onSubmit={inviteUser}><label>Full name *<input name="full_name" required /></label><label>Email address *<input name="email" type="email" required /></label><label>Role *<select name="role" required defaultValue=""><option value="" disabled>Select role</option>{(profile.role === 'super_admin' ? ['super_admin','fleet_manager','data_entry','driver'] : ['data_entry','driver']).map(r => <option key={r} value={r}>{roleTitles[r as Role]}</option>)}</select></label><label>Agency *<select name="agency_id" required defaultValue=""><option value="" disabled>Select agency</option>{agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Send invitation</button></div></form><div className="panel-foot">Super Admin can appoint Fleet Managers to any active agency. Fleet Managers can invite Data Entry and Drivers for their own agency only.</div></section></>}
           {view === 'reports' && <Reports counts={counts} />}
         </div>
         <footer className="main-footer"><span>FMS · Fleet Management System</span><span>Authorized access only</span><span>Sarawak · Malaysia</span></footer>
