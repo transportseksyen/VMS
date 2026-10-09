@@ -95,6 +95,7 @@ Deno.serve(async (request: Request) => {
     const type = String(body?.type || "");
     const applicationId = String(body?.application_id || "");
     const assignmentId = String(body?.assignment_id || "");
+    const fuelTransactionId = String(body?.fuel_transaction_id || "");
     const { data: actor } = await admin.from("fms_profiles").select("id,role,agency_id,status").eq("id", authData.user.id).maybeSingle();
     if (!actor || actor.status !== "active") return reply(403, { error: "An active FMS account is required" });
     const isSubmissionNotice = type === "assignment-submitted";
@@ -103,7 +104,39 @@ Deno.serve(async (request: Request) => {
     } else if (!["fleet_manager","super_admin"].includes(actor.role)) {
       return reply(403, { error: "Only authorized Fleet Managers can send decision notifications" });
     }
-    if (!["assignment-approved","assignment-rejected","assignment-returned","assignment-cancelled","assignment-submitted"].includes(type)) return reply(400, { error: "Unsupported notification type" });
+    const fuelDecision = type === "fuel-approved" || type === "fuel-returned";
+    if (!["assignment-approved","assignment-rejected","assignment-returned","assignment-cancelled","assignment-submitted","fuel-approved","fuel-returned"].includes(type)) return reply(400, { error: "Unsupported notification type" });
+
+    if (fuelDecision) {
+      if (!fuelTransactionId) return reply(400, { error: "Fuel transaction ID is required" });
+      const { data: fuel, error: fuelError } = await admin.from("fms_fuel_transactions").select("*").eq("id",fuelTransactionId).maybeSingle();
+      if (fuelError || !fuel) return reply(404, { error: "Fuel transaction not found" });
+      if (actor.role !== "super_admin" && actor.agency_id !== fuel.agency_id) return reply(403, { error: "Agency access denied" });
+      const expectedStatus = type === "fuel-approved" ? "approved" : "returned";
+      if (fuel.status !== expectedStatus) return reply(400, { error: "Fuel transaction status does not match the notification" });
+      const { data: driver } = await admin.from("fms_drivers").select("profile_id,full_name,email,phone,whatsapp_opt_in").eq("id",fuel.driver_id).maybeSingle();
+      if (!driver) return reply(404, { error: "Assigned driver not found" });
+      const approved = type === "fuel-approved";
+      const subject = (approved ? "FMS fuel report approved — " : "FMS fuel report returned — ") + fuel.reporting_month;
+      const reasonText = approved ? "" : "<p><strong>Correction required:</strong> " + esc(fuel.review_remarks || body?.reason || "Please contact your Fleet Manager for details.") + "</p>";
+      const html = "<p>Dear " + esc(driver.full_name) + ",</p><p>Your fuel report for <strong>" + esc(fuel.reporting_month) + "</strong> has been " + (approved ? "approved" : "returned for correction") + ".</p>" +
+        "<p><strong>Fuel volume:</strong> " + Number(fuel.litres || 0) + " L<br><strong>Total cost:</strong> RM " + Number(fuel.amount_rm || 0).toFixed(2) +
+        "<br><strong>Odometer:</strong> " + esc(fuel.odometer_reading ?? "Not recorded") + "</p>" + reasonText + "<p>Fleet Management System — Sarawak</p>";
+      const emailResult = await sendEmail(String(driver.email || ""),subject,html);
+      const whatsappResult = driver.whatsapp_opt_in && driver.phone
+        ? await sendWhatsApp(String(driver.phone),"FUEL-" + String(fuel.reporting_month),approved ? "Fuel report approved" : "Fuel report returned","Month " + String(fuel.reporting_month) + "; RM " + Number(fuel.amount_rm || 0).toFixed(2))
+        : {status:"not_opted_in",error:null};
+      await admin.from("fms_notifications").insert({
+        recipient_profile_id:driver.profile_id,recipient_email:driver.email,subject,body:subject + " " + String(fuel.review_remarks || ""),
+        notification_type:approved ? "fuel_report_approved" : "fuel_report_returned",
+        related_table:"fms_fuel_transactions",related_record_id:fuel.id,
+        email_status:emailResult.status,email_error:emailResult.error ? String(emailResult.error).slice(0,1000) : null,
+        sent_at:emailResult.status === "sent" ? new Date().toISOString() : null,
+        whatsapp_status:whatsappResult.status,whatsapp_error:whatsappResult.error ? String(whatsappResult.error).slice(0,1000) : null,
+        whatsapp_sent_at:whatsappResult.status === "sent" ? new Date().toISOString() : null
+      });
+      return reply(200,{success:true,emailStatus:emailResult.status,whatsappStatus:whatsappResult.status});
+    }
 
     const { data: application } = await admin.from("fms_applications").select("*").eq("id", applicationId).maybeSingle();
     if (!application) return reply(404, { error: "Application not found" });
