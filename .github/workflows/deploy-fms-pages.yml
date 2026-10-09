@@ -1,0 +1,51 @@
+name: Deploy FMS web to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - '.github/workflows/deploy-fms-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: Install dependencies
+        run: npm install
+      - name: Build FMS web
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: https://onxxgdbnonctwiykwdxo.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_VPJ_qVVMLV8ov0EWaA0opw_V90mFdFs
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
