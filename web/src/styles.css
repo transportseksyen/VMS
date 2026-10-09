@@ -167,8 +167,14 @@ h1, h2, h3, strong { font-family: 'Manrope', 'DM Sans', sans-serif; }
 .note-grid p { color: #8692a3; font-size: 9px; line-height: 1.55; margin: 0; }
 .note-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 .gold-dot { background: #c6a35b; }.blue-dot { background: #4a78b5; }.green-dot { background: #49a17c; }
-.table-actions { display: flex; justify-content: flex-end; margin: 0 0 10px; }
+.table-actions { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin: 0 0 10px; }
+.table-search { display: flex; flex-direction: column; gap: 5px; min-width: min(100%, 230px); color: #53657d; font-size: 11px; font-weight: 700; }
+.table-search input { min-height: 36px; width: 100%; border: 1px solid #dce3ed; border-radius: 8px; background: #fff; color: #203650; padding: 8px 11px; font: inherit; font-weight: 500; outline: none; }
+.table-search input:focus { border-color: #728ba9; box-shadow: 0 0 0 3px rgba(70, 105, 148, .12); }
 .table-wrap { overflow: auto; width: 100%; }
+.table-pagination { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 2px 2px; color: #728198; font-size: 11px; }
+.table-pagination > div { display: flex; gap: 8px; }
+.table-pagination button:disabled { cursor: not-allowed; opacity: .45; }
 table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 620px; font-size: 11px; }
 th { color: #8190a4; background: #f8fafc; text-transform: uppercase; letter-spacing: .06em; font-size: 9px; font-weight: 800; padding: 12px 12px; text-align: left; border-top: 1px solid #edf0f4; border-bottom: 1px solid #e7ebf1; }
 th:first-child { border-radius: 7px 0 0 7px; }
@@ -339,6 +345,12 @@ td:first-child { color: #253a56; font-weight: 700; }
   .health-grid { grid-template-columns: 1fr; }
   .settings-heading { flex-direction: column; }
   .settings-heading > button { width: 100%; }
+}
+@media (max-width: 640px) {
+  .table-actions { align-items: stretch; }
+  .table-search { min-width: 100%; }
+  .table-actions > button { align-self: flex-start; }
+  .table-pagination { align-items: flex-start; }
 }
 @media print {
   @page { size: A4 portrait; margin: 12mm; }
