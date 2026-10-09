@@ -527,7 +527,14 @@ export default function App() {
     const record = {
       agency_id: profile.agency_id, vehicle_id: String(fd.get('vehicle_id') || ''),
       category: String(fd.get('category') || ''), description: String(fd.get('description') || '').trim(),
-      date_reported: String(fd.get('date_reported') || ''), status: 'submitted',
+      date_reported: String(fd.get('date_reported') || ''),
+      workshop: String(fd.get('workshop') || '').trim() || null,
+      odometer_reading: String(fd.get('odometer_reading') || '') ? Number(fd.get('odometer_reading')) : null,
+      service_date: String(fd.get('service_date') || '') || null,
+      next_service_due: String(fd.get('next_service_due') || '') || null,
+      estimated_cost_rm: String(fd.get('estimated_cost_rm') || '') ? Number(fd.get('estimated_cost_rm')) : null,
+      actual_cost_rm: String(fd.get('actual_cost_rm') || '') ? Number(fd.get('actual_cost_rm')) : null,
+      status: 'submitted',
       created_by: profile.id, remarks: String(fd.get('remarks') || '').trim()
     };
     const docTypes = [
@@ -578,6 +585,56 @@ export default function App() {
     await loadRows('maintenance');
     await loadCounts();
     form.reset();
+    setBusy(false);
+  }
+
+  async function reviewMaintenance(row: Row, decision: 'approve' | 'reject' | 'complete') {
+    if (!supabase || !profile || !['fleet_manager','super_admin'].includes(profile.role)) return;
+    let reason = '';
+    let actualCost: number | null = null;
+    let workshop = '';
+    let serviceDate = '';
+    let nextServiceDue = '';
+    let odometerReading: number | null = null;
+    let remarks = '';
+    if (decision === 'reject') {
+      const entered = window.prompt('Enter the reason for rejecting this maintenance record:');
+      if (!entered || entered.trim().length < 3) return;
+      reason = entered.trim();
+    }
+    if (decision === 'complete') {
+      const costText = window.prompt('Actual cost in RM (leave blank to keep existing):', row.actual_cost_rm == null ? '' : String(row.actual_cost_rm));
+      if (costText === null) return;
+      if (costText.trim() !== '') {
+        actualCost = Number(costText);
+        if (!Number.isFinite(actualCost) || actualCost < 0) { setError('Actual cost must be zero or greater.'); return; }
+      }
+      const today = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Kuching',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+      serviceDate = window.prompt('Service date (YYYY-MM-DD):', row.service_date || today) || '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(serviceDate)) { setError('A valid service date is required.'); return; }
+      workshop = window.prompt('Workshop / service provider:', row.workshop || '') || '';
+      nextServiceDue = window.prompt('Next service due date (YYYY-MM-DD, optional):', row.next_service_due || '') || '';
+      if (nextServiceDue && !/^\d{4}-\d{2}-\d{2}$/.test(nextServiceDue)) { setError('Next service due must use YYYY-MM-DD.'); return; }
+      const odometerText = window.prompt('Odometer reading at service (km, optional):', row.odometer_reading == null ? '' : String(row.odometer_reading));
+      if (odometerText === null) return;
+      if (odometerText.trim() !== '') {
+        odometerReading = Number(odometerText);
+        if (!Number.isFinite(odometerReading) || odometerReading < 0) { setError('Odometer must be zero or greater.'); return; }
+      }
+      remarks = window.prompt('Completion remarks (optional):', row.remarks || '') || '';
+    }
+    setBusy(true); setError(''); setNotice('');
+    const {data, error: reviewError} = await supabase.rpc('fms_review_maintenance' as any, {
+      p_maintenance_id: row.id, p_decision: decision, p_reason: reason || null,
+      p_actual_cost_rm: actualCost, p_workshop: workshop || null,
+      p_service_date: serviceDate || null, p_next_service_due: nextServiceDue || null,
+      p_odometer_reading: odometerReading, p_remarks: remarks || null
+    } as any);
+    if (reviewError || data?.error) setError(data?.error || reviewError?.message || 'Maintenance decision could not be saved.');
+    else {
+      setNotice(decision === 'approve' ? 'Maintenance approved and marked in progress.' : decision === 'reject' ? 'Maintenance rejected and reason recorded.' : 'Maintenance completed and service details saved.');
+      await Promise.all([loadRows('maintenance'),loadCounts()]);
+    }
     setBusy(false);
   }
 
@@ -842,7 +899,7 @@ export default function App() {
           {view === 'drivers' && <><section className="panel"><PanelHeading title="Driver directory" subtitle="Driver records require Fleet Manager approval before assignment." />{loading ? <Loading /> : <DataTable rows={rows} kind="drivers" loading={loading} role={profile.role} onApprove={r => void approveRegistryRecord('drivers', r)} />}</section>{canEditRegistry && <section className="panel form-panel"><PanelHeading title="Register a driver" subtitle="Emergency contact details are restricted to authorized staff." /><form className="form-grid" onSubmit={saveDriver}><label>Driver name *<input name="full_name" required /></label><label>Email address *<input name="email" type="email" required /></label><label>Phone number *<input name="phone" required /></label><label>Emergency contact name<input name="emergency_contact_name" /></label><label>Emergency contact phone<input name="emergency_contact_phone" /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Submit for approval</button></div></form></section>}</>}
           {view === 'assignments' && <section className="panel"><PanelHeading title="Assignment monitoring" subtitle="Confirmed trips are created only after Fleet Manager approval." /><AssignmentCalendar rows={rows} /><DataTable rows={rows} kind="assignments" loading={loading} role={profile.role} onCancel={r => void decideAssignment(r, 'cancel')} /><div className="panel-foot">Date conflicts must be checked by the database approval function before an assignment can become confirmed.</div></section>}
           {view === 'fuel' && <><section className="panel"><PanelHeading title="Fuel transactions" subtitle="Drivers submit a receipt for each purchase. Monthly totals are calculated from saved transactions." />{loading ? <Loading /> : <><FuelSummary rows={rows} /><DataTable rows={rows} kind="fuel" loading={loading} role={profile.role} onApprove={r => void reviewFuel(r, 'approved')} onReject={r => void reviewFuel(r, 'returned')} onDocument={path => void openDocument(path)} /></>}</section>{isDriver && <section className="panel form-panel"><PanelHeading title="Submit a fuel transaction" subtitle="Upload a readable receipt photo or PDF. Maximum file size: 5 MB." /><form className="form-grid" onSubmit={saveFuel}><label>Vehicle *<select name="vehicle_id" required defaultValue=""><option value="" disabled>Select vehicle</option>{fuelVehicles.map(v => <option value={v.id} key={v.id}>{v.plate_number} · {v.brand} {v.model}</option>)}</select></label><label>Reporting month *<input name="reporting_month" type="month" required /></label><label>Purchase date *<input name="purchase_date" type="date" required /></label><label>Odometer (km) *<input name="odometer_reading" type="number" min="0" required /></label><label>Litres *<input name="litres" type="number" min="0.01" step="0.01" required /></label><label>Total cost (RM) *<input name="amount_rm" type="number" min="0.01" step="0.01" required /></label><label className="full-width">Receipt *<input name="receipt" type="file" accept="image/*,.pdf,application/pdf" required /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Submit fuel transaction</button></div></form></section>}</>}
-          {view === 'maintenance' && <><section className="panel"><PanelHeading title="Maintenance records" subtitle="Track vehicle servicing and supporting documents." />{loading ? <Loading /> : <DataTable rows={rows} kind="maintenance" loading={loading} role={profile.role} onDocument={path => void openDocument(path)} />}</section>{canEditRegistry && <section className="panel form-panel"><PanelHeading title="Create maintenance record" subtitle="Add a record before attaching the quotation, request, service order and invoice." /><form className="form-grid" onSubmit={saveMaintenance}><label>Vehicle ID *<input name="vehicle_id" required placeholder="Paste approved vehicle ID" /></label><label>Category *<select name="category" required><option value="">Choose category</option><option>Scheduled service</option><option>Repair</option><option>Tyres</option><option>Accident damage</option><option>Inspection</option><option>Other</option></select></label><label>Date reported *<input name="date_reported" type="date" required /></label><label>Description *<input name="description" required /></label><label>Quotation (PDF/JPG/PNG)<input name="quotation" type="file" accept=".pdf,image/jpeg,image/png,application/pdf" /></label><label>Maintenance request (PDF/JPG/PNG)<input name="maintenance_request" type="file" accept=".pdf,image/jpeg,image/png,application/pdf" /></label><label>Service order (PDF/JPG/PNG)<input name="service_order" type="file" accept=".pdf,image/jpeg,image/png,application/pdf" /></label><label>Invoice (PDF/JPG/PNG)<input name="invoice" type="file" accept=".pdf,image/jpeg,image/png,application/pdf" /></label><label className="full-width">Remarks<textarea name="remarks" rows={2} /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Save maintenance and documents</button></div></form></section>}</>}
+          {view === 'maintenance' && <><section className="panel"><PanelHeading title="Maintenance records" subtitle="Track the request, workshop, dates, costs and supporting documents." />{loading ? <Loading /> : <DataTable rows={rows} kind="maintenance" loading={loading} role={profile.role} busy={busy} onMaintenanceReview={(r,d) => void reviewMaintenance(r,d)} onDocument={path => void openDocument(path)} />}</section>{canEditRegistry && <section className="panel form-panel"><PanelHeading title="Create maintenance record" subtitle="Record service details and attach supporting documents for review." /><form className="form-grid" onSubmit={saveMaintenance}><label>Approved vehicle *<select name="vehicle_id" required defaultValue=""><option value="" disabled>Select vehicle</option>{maintenanceVehicles.map(vehicle => <option key={vehicle.id} value={vehicle.id}>{vehicle.plate_number} · {vehicle.brand} {vehicle.model}</option>)}</select></label><label>Category *<select name="category" required><option value="">Choose category</option><option>Scheduled service</option><option>Repair</option><option>Tyres</option><option>Accident damage</option><option>Inspection</option><option>Other</option></select></label><label>Date reported *<input name="date_reported" type="date" required /></label><label>Description *<input name="description" required /></label><label>Workshop / service provider<input name="workshop" /></label><label>Odometer reading (km)<input name="odometer_reading" type="number" min="0" step="0.1" /></label><label>Service date<input name="service_date" type="date" /></label><label>Next service due<input name="next_service_due" type="date" /></label><label>Estimated cost (RM)<input name="estimated_cost_rm" type="number" min="0" step="0.01" /></label><label>Actual cost (RM)<input name="actual_cost_rm" type="number" min="0" step="0.01" /></label><label>Quotation (PDF/JPG/PNG)<input name="quotation" type="file" accept=".pdf,image/jpeg,image/png,application/pdf" /></label><label>Maintenance request (PDF/JPG/PNG)<input name="maintenance_request" type="file" accept=".pdf,image/jpeg,image/png,application/pdf" /></label><label>Service order (PDF/JPG/PNG)<input name="service_order" type="file" accept=".pdf,image/jpeg,image/png,application/pdf" /></label><label>Invoice (PDF/JPG/PNG)<input name="invoice" type="file" accept=".pdf,image/jpeg,image/png,application/pdf" /></label><label className="full-width">Remarks<textarea name="remarks" rows={2} /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Save maintenance and documents</button></div></form></section>}</>}
           {view === 'availability' && <section className="panel form-panel"><PanelHeading title="My availability" subtitle="Update your expected leave, course or unavailability period." /><form className="form-grid" onSubmit={setAvailability}><label>Status *<select name="availability_status" required value={driverAvailability.status} onChange={e => setDriverAvailabilityState(prev => ({ ...prev, status: e.target.value }))}><option value="available">Available</option><option value="on_leave">On leave</option><option value="on_course">On course</option><option value="unavailable">Unavailable</option></select></label><label>Start date<input name="availability_start" type="date" value={driverAvailability.start} onChange={e => setDriverAvailabilityState(prev => ({ ...prev, start: e.target.value }))} /></label><label>End date<input name="availability_end" type="date" min={driverAvailability.start || undefined} value={driverAvailability.end} onChange={e => setDriverAvailabilityState(prev => ({ ...prev, end: e.target.value }))} /></label><label className="check-label full-width"><input type="checkbox" name="whatsapp_opt_in" checked={driverWhatsAppOptIn} onChange={e => setDriverWhatsAppOptIn(e.target.checked)} /> <span>I agree to receive trip assignment, rejection and cancellation updates from FMS Sarawak by WhatsApp on my registered phone number.</span></label><label className="full-width">Remarks<textarea name="availability_remarks" rows={3} value={driverAvailability.remarks} onChange={e => setDriverAvailabilityState(prev => ({ ...prev, remarks: e.target.value }))} /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Update availability'}</button></div></form></section>}
           {view === 'agencies' && profile.role === 'super_admin' && <><section className="panel"><PanelHeading title="Agency registry" subtitle="Create and manage the agencies served by FMS." /><DataTable rows={rows} kind="agencies" loading={loading} role={profile.role} onApprove={r => void toggleAgency(r)} /></section><section className="panel form-panel"><PanelHeading title="Register an agency" subtitle="Only active agencies appear in the public vehicle request form." /><form className="form-grid" onSubmit={createAgency}><label>Agency name *<input name="name" required maxLength={180} /></label><label>Agency code<input name="code" maxLength={16} placeholder="Example: SIBU-TR" /></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Create agency</button></div></form></section></>}{view === 'users' && <><section className="panel"><PanelHeading title="Staff directory" subtitle="View accounts visible within your authorized scope." /><DataTable rows={rows} kind="users" loading={loading} role={profile.role} busy={busy} agencies={agencies} currentUserId={profile.id} onApprove={r => void approveStaff(r)} onStatus={(r, action) => void changeUserStatus(r, action)} onRoleAgency={changeUserRoleAgency} /></section><section className="panel form-panel"><PanelHeading title="Invite a staff user" subtitle="An invitation email will be sent. Role and agency permissions are validated server-side." /><form className="form-grid" onSubmit={inviteUser}><label>Full name *<input name="full_name" required /></label><label>Email address *<input name="email" type="email" required /></label><label>Role *<select name="role" required defaultValue=""><option value="" disabled>Select role</option>{(profile.role === 'super_admin' ? ['super_admin','fleet_manager','data_entry','driver'] : ['data_entry','driver']).map(r => <option key={r} value={r}>{roleTitles[r as Role]}</option>)}</select></label><label>Agency *<select name="agency_id" required defaultValue=""><option value="" disabled>Select agency</option>{agencies.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label><div className="form-action"><button className="btn btn-primary" disabled={busy}>Send invitation</button></div></form><div className="panel-foot">Super Admin can appoint Fleet Managers to any active agency. Fleet Managers can invite Data Entry and Drivers for their own agency only.</div></section></>}
           {view === 'reports' && <Reports counts={counts} />}
@@ -897,7 +954,7 @@ function Dashboard({ profile, counts, onNavigate }: { profile: Profile; counts: 
   </div>;
 }
 
-function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, onCancel, onDocument, onReturn, agencies = [], currentUserId, onStatus, onRoleAgency, busy = false }: { rows: Row[]; kind: string; loading: boolean; role: Role; onAssign?: (r: Row) => void; onApprove?: (r: Row) => void; onReject?: (r: Row) => void; onCancel?: (r: Row) => void; onDocument?: (path: string) => void; onReturn?: (r: Row) => void; agencies?: Row[]; currentUserId?: string; onStatus?: (r: Row, action: 'suspend' | 'activate') => void; onRoleAgency?: (r: Row, event: FormEvent<HTMLFormElement>) => void; busy?: boolean }) {
+function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, onCancel, onDocument, onReturn, agencies = [], currentUserId, onStatus, onRoleAgency, onMaintenanceReview, busy = false }: { rows: Row[]; kind: string; loading: boolean; role: Role; onAssign?: (r: Row) => void; onApprove?: (r: Row) => void; onReject?: (r: Row) => void; onCancel?: (r: Row) => void; onDocument?: (path: string) => void; onReturn?: (r: Row) => void; agencies?: Row[]; currentUserId?: string; onStatus?: (r: Row, action: 'suspend' | 'activate') => void; onRoleAgency?: (r: Row, event: FormEvent<HTMLFormElement>) => void; onMaintenanceReview?: (r: Row, decision: 'approve' | 'reject' | 'complete') => void; busy?: boolean }) {
   if (loading) return <Loading />;
   const columns: Record<string, {key:string;label:string}[]> = {
     agencies: [{key:'name',label:'Agency name'},{key:'code',label:'Code'},{key:'is_active',label:'Status'}],
@@ -907,7 +964,7 @@ function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, o
     driverDirectory: [{key:'full_name',label:'Driver'},{key:'availability_status',label:'Availability'},{key:'approval_status',label:'Approval'},{key:'account_status',label:'Account'}],
     assignments: [{key:'application',label:'Request'},{key:'vehicle',label:'Vehicle'},{key:'driver',label:'Driver'},{key:'start_date',label:'Start'},{key:'end_date',label:'End'},{key:'status',label:'Status'}],
     fuel: [{key:'reporting_month',label:'Month'},{key:'purchase_date',label:'Purchase date'},{key:'odometer_reading',label:'Odometer'},{key:'litres',label:'Litres'},{key:'amount_rm',label:'Cost (RM)'},{key:'receipt_path',label:'Receipt'},{key:'status',label:'Status'}],
-    maintenance: [{key:'vehicle_id',label:'Vehicle ID'},{key:'category',label:'Category'},{key:'description',label:'Description'},{key:'date_reported',label:'Reported'},{key:'documents',label:'Documents'},{key:'status',label:'Status'}],
+    maintenance: [{key:'vehicle',label:'Vehicle'},{key:'category',label:'Category'},{key:'description',label:'Description'},{key:'date_reported',label:'Reported'},{key:'workshop',label:'Workshop'},{key:'odometer_reading',label:'Odometer'},{key:'service_date',label:'Service date'},{key:'next_service_due',label:'Next service'},{key:'estimated_cost_rm',label:'Estimated RM'},{key:'actual_cost_rm',label:'Actual RM'},{key:'documents',label:'Documents'},{key:'status',label:'Status'}],
     users: [{key:'full_name',label:'Name'},{key:'role',label:'Role'},{key:'agency_id',label:'Agency ID'},{key:'status',label:'Account'}],
     notifications: [{key:'created_at',label:'Recorded'},{key:'subject',label:'Notification'},{key:'notification_type',label:'Type'},{key:'email_status',label:'Email'},{key:'whatsapp_status',label:'WhatsApp'},{key:'sent_at',label:'Email sent'}]
   };
@@ -925,7 +982,7 @@ function DataTable({ rows, kind, loading, role, onAssign, onApprove, onReject, o
     if (['start_date','end_date','purchase_date','date_reported','insurance_expiry','road_tax_expiry','inspection_date','next_service_due','service_date'].includes(key)) return dateText(v);
     if (['created_at','sent_at'].includes(key)) return dateTimeText(v);
     if (['email_error','whatsapp_error'].includes(key)) return v ? String(v).slice(0, 160) : '—';
-    if (key === 'amount_rm') return moneyText(v);
+    if (key === 'amount_rm' || key === 'estimated_cost_rm' || key === 'actual_cost_rm') return v == null ? '—' : moneyText(v);
     if (key === 'role') return roleTitles[v as Role] || statusText(v);
     return v === null || v === undefined || v === '' ? '—' : String(v);
   }
