@@ -26,8 +26,8 @@ const navByRole: Record<Role, View[]> = {
   driver: ['dashboard', 'assignments', 'vehicles', 'drivers', 'fuel', 'availability']
 };
 const tableByView: Partial<Record<View, string>> = {
-  applications: 'applications', vehicles: 'vehicles', drivers: 'drivers',
-  assignments: 'assignments', fuel: 'fuel_transactions', maintenance: 'maintenance_records', users: 'profiles'
+  applications: 'fms_applications', vehicles: 'fms_vehicles', drivers: 'fms_drivers',
+  assignments: 'fms_assignments', fuel: 'fms_fuel_transactions', maintenance: 'fms_maintenance_records', users: 'fms_profiles'
 };
 const statusText = (s: string) => (s || '—').replaceAll('_', ' ').replace(/\b\w/g, m => m.toUpperCase());
 const dateText = (v: string) => v ? new Date(v + (v.length === 10 ? 'T00:00:00' : '')).toLocaleDateString('en-MY') : '—';
@@ -71,7 +71,7 @@ export default function App() {
 
   useEffect(() => {
     if (supabase) {
-      supabase.from('agencies').select('id,name').eq('is_active', true).order('name')
+      supabase.from('fms_agencies').select('id,name').eq('is_active', true).order('name')
         .then(({ data }) => setAgencies(data || []));
     }
   }, []);
@@ -79,9 +79,9 @@ export default function App() {
   useEffect(() => {
     if (supabase && profile && view === 'fuel' && profile.role === 'driver') {
       void (async () => {
-        const { data: driverRow } = await supabase.from('drivers').select('id').eq('profile_id', profile.id).maybeSingle();
+        const { data: driverRow } = await supabase.from('fms_drivers').select('id').eq('profile_id', profile.id).maybeSingle();
         if (!driverRow) { setFuelVehicles([]); return; }
-        const { data } = await supabase.from('assignments')
+        const { data } = await supabase.from('fms_assignments')
           .select('vehicle_id,vehicles(id,brand,model,plate_number)')
           .eq('driver_id', driverRow.id).eq('status', 'approved');
         const unique = new Map<string, Row>();
@@ -99,7 +99,7 @@ export default function App() {
 
   async function loadProfile(userId: string) {
     if (!supabase) return;
-    const { data, error: profileError } = await supabase.from('profiles')
+    const { data, error: profileError } = await supabase.from('fms_profiles')
       .select('id,full_name,role,agency_id,status').eq('id', userId).maybeSingle();
     if (profileError || !data || data.status !== 'active') {
       setProfile(null);
@@ -113,11 +113,16 @@ export default function App() {
 
   async function loadCounts() {
     if (!supabase || !profile) return;
-    const names = ['applications', 'vehicles', 'drivers', 'assignments', 'fuel_transactions', 'maintenance_records'];
+    const names: Array<[string, string]> = [
+      ['applications', 'fms_applications'], ['vehicles', 'fms_vehicles'],
+      ['drivers', 'fms_drivers'], ['assignments', 'fms_assignments'],
+      ['fuel_transactions', 'fms_fuel_transactions'],
+      ['maintenance_records', 'fms_maintenance_records']
+    ];
     const next: Record<string, number> = {};
-    await Promise.all(names.map(async (table) => {
+    await Promise.all(names.map(async ([key, table]) => {
       const { count } = await (supabase.from(table as any) as any).select('id', { count: 'exact', head: true });
-      next[table] = count || 0;
+      next[key] = count || 0;
     }));
     setCounts(next);
   }
@@ -130,7 +135,7 @@ export default function App() {
     setError('');
     let query: any = supabase.from(table).select('*');
     if (target === 'assignments') {
-      query = supabase.from('assignments').select('*,applications(reference,applicant_name,destination),vehicles(brand,model,plate_number),drivers(full_name)');
+      query = supabase.from('fms_assignments').select('*,applications(reference,applicant_name,destination),vehicles(brand,model,plate_number),drivers(full_name)');
     }
     const { data, error: queryError } = await query.order('created_at', { ascending: false }).limit(100);
     if (queryError) setError(queryError.message);
@@ -230,8 +235,8 @@ export default function App() {
     if (!supabase || !profile) return;
     setError(''); setNotice('');
     const [v, d] = await Promise.all([
-      supabase.from('vehicles').select('id,brand,model,plate_number,seat_capacity').eq('agency_id', app.agency_id || profile.agency_id).eq('approval_status', 'approved').eq('vehicle_status', 'active'),
-      supabase.from('drivers').select('id,full_name,email').eq('agency_id', app.agency_id || profile.agency_id).eq('approval_status', 'approved').eq('account_status', 'active')
+      supabase.from('fms_vehicles').select('id,brand,model,plate_number,seat_capacity').eq('agency_id', app.agency_id || profile.agency_id).eq('approval_status', 'approved').eq('vehicle_status', 'active'),
+      supabase.from('fms_drivers').select('id,full_name,email').eq('agency_id', app.agency_id || profile.agency_id).eq('approval_status', 'approved').eq('account_status', 'active')
     ]);
     setVehicles(v.data || []); setDrivers(d.data || []);
     setSelectedApp(app);
@@ -242,7 +247,7 @@ export default function App() {
     if (!supabase || !profile || !selectedApp) return;
     setBusy(true); setError('');
     const fd = new FormData(event.currentTarget);
-    const { error: insertError } = await supabase.from('assignments').insert({
+    const { error: insertError } = await supabase.from('fms_assignments').insert({
       agency_id: selectedApp.agency_id,
       application_id: selectedApp.id,
       vehicle_id: String(fd.get('vehicle_id') || ''),
@@ -255,7 +260,7 @@ export default function App() {
     if (insertError) {
       setError(insertError.message); setBusy(false); return;
     }
-    await supabase.from('applications').update({ status: 'pending_manager_approval' }).eq('id', selectedApp.id);
+    await supabase.from('fms_applications').update({ status: 'pending_manager_approval' }).eq('id', selectedApp.id);
     setSelectedApp(null);
     setNotice('Proposed assignment sent to the Fleet Manager for approval.');
     setBusy(false);
@@ -268,12 +273,12 @@ export default function App() {
     let result: any;
     let reason = '';
     if (decision === 'approve') {
-      result = await supabase.rpc('approve_assignment', { p_assignment_id: row.id });
+      result = await supabase.rpc('fms_approve_assignment', { p_assignment_id: row.id });
     } else {
       const enteredReason = window.prompt('Enter a rejection reason:');
       if (!enteredReason || !enteredReason.trim()) return;
       reason = enteredReason.trim();
-      result = await supabase.rpc('reject_assignment', { p_assignment_id: row.id, p_reason: reason });
+      result = await supabase.rpc('fms_reject_assignment', { p_assignment_id: row.id, p_reason: reason });
     }
     if (result.error) {
       setError(result.error.message);
@@ -299,10 +304,11 @@ export default function App() {
   }
 
   async function approveRegistryRecord(table: 'vehicles' | 'drivers', row: Row) {
-    if (!supabase || !profile) return;
-    const { error: updateError } = await (supabase.from(table) as any).update({
-      approval_status: 'approved', approved_by: profile.id, approved_at: new Date().toISOString()
-    }).eq('id', row.id);
+    if (!supabase) return;
+    setError(''); setNotice('');
+    const rpc = table === 'vehicles' ? 'fms_approve_vehicle' : 'fms_approve_driver';
+    const arg = table === 'vehicles' ? 'p_vehicle_id' : 'p_driver_id';
+    const { error: updateError } = await supabase.rpc(rpc as any, { [arg]: row.id } as any);
     if (updateError) setError(updateError.message);
     else { setNotice('Record approved.'); await loadRows(view); }
   }
@@ -319,7 +325,7 @@ export default function App() {
       seat_capacity: Number(fd.get('seat_capacity') || 1), vehicle_status: 'active',
       approval_status: 'pending', created_by: profile.id
     };
-    const { error: saveError } = await supabase.from('vehicles').insert(record);
+    const { error: saveError } = await supabase.from('fms_vehicles').insert(record);
     if (saveError) setError(saveError.message);
     else { setNotice('Vehicle saved and submitted for approval.'); await loadRows('vehicles'); form.reset(); }
   }
@@ -337,7 +343,7 @@ export default function App() {
       account_status: 'active', availability_status: 'available',
       approval_status: 'pending', created_by: profile.id
     };
-    const { error: saveError } = await supabase.from('drivers').insert(record);
+    const { error: saveError } = await supabase.from('fms_drivers').insert(record);
     if (saveError) setError(saveError.message);
     else { setNotice('Driver saved and submitted for approval.'); await loadRows('drivers'); form.reset(); }
   }
@@ -352,14 +358,14 @@ export default function App() {
     const allowedTypes = ['application/pdf','image/jpeg','image/png'];
     if (!allowedTypes.includes(receipt.type)) { setError('Receipt must be a PDF, JPG or PNG.'); return; }
     const vehicleId = String(fd.get('vehicle_id') || '');
-    const { data: driverRecord, error: driverError } = await supabase.from('drivers').select('id').eq('profile_id', profile.id).maybeSingle();
+    const { data: driverRecord, error: driverError } = await supabase.from('fms_drivers').select('id').eq('profile_id', profile.id).maybeSingle();
     if (driverError || !driverRecord) { setError('Your driver profile is not linked. Contact the Data Entry user or Fleet Manager.'); return; }
     const safeFileName = receipt.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const path = profile.agency_id + '/fuel/' + driverRecord.id + '/' + crypto.randomUUID() + '-' + safeFileName;
     setBusy(true); setError('');
     const { error: uploadError } = await supabase.storage.from('fms-documents').upload(path, receipt, { contentType: receipt.type, upsert: false });
     if (uploadError) { setError(uploadError.message); setBusy(false); return; }
-    const { error: insertError } = await supabase.from('fuel_transactions').insert({
+    const { error: insertError } = await supabase.from('fms_fuel_transactions').insert({
       agency_id: profile.agency_id, driver_id: driverRecord.id, vehicle_id: vehicleId,
       reporting_month: String(fd.get('reporting_month') || ''),
       purchase_date: String(fd.get('purchase_date') || ''),
@@ -383,7 +389,7 @@ export default function App() {
       date_reported: String(fd.get('date_reported') || ''), status: 'submitted',
       created_by: profile.id, remarks: String(fd.get('remarks') || '').trim()
     };
-    const { error: saveError } = await supabase.from('maintenance_records').insert(record);
+    const { error: saveError } = await supabase.from('fms_maintenance_records').insert(record);
     if (saveError) setError(saveError.message);
     else { setNotice('Maintenance record submitted. Add its supporting documents from the record review screen when enabled.'); await loadRows('maintenance'); form.reset(); }
   }
@@ -392,7 +398,7 @@ export default function App() {
     event.preventDefault();
     if (!supabase || !profile) return;
     const fd = new FormData(event.currentTarget);
-    const { error: updateError } = await supabase.from('drivers')
+    const { error: updateError } = await supabase.from('fms_drivers')
       .update({ availability_status: String(fd.get('availability_status')), availability_start: fd.get('availability_start') || null, availability_end: fd.get('availability_end') || null, availability_remarks: fd.get('availability_remarks') || null })
       .eq('profile_id', profile.id);
     if (updateError) setError(updateError.message); else setNotice('Availability updated.');
