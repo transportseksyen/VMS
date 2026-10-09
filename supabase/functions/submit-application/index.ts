@@ -79,6 +79,11 @@ Deno.serve(async (request: Request) => {
     if (!name || !applicantAgency || !email || !phone || !destination || !purpose || !agencyId) {
       return reply(400, { error: "Please complete all required fields" });
     }
+    const passengerNames = String(a.passenger_names || "").trim();
+    if (name.length > 120 || applicantAgency.length > 180 || phone.length > 40 ||
+        destination.length > 250 || purpose.length > 2000 || passengerNames.length > 5000) {
+      return reply(400, { error: "One or more application fields exceed the allowed length" });
+    }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return reply(400, { error: "Invalid email address" });
     if (!Number.isInteger(passengers) || passengers < 1 || passengers > 500 ||
         !Number.isInteger(cars) || cars < 1 || cars > 50) return reply(400, { error: "Passenger or vehicle count is invalid" });
@@ -112,15 +117,14 @@ Deno.serve(async (request: Request) => {
       agency_id: agencyId,
       applicant_name: name,
       applicant_agency_name: applicantAgency,
-      purpose,
       email, phone,
       passenger_count: passengers,
       vehicles_requested: cars,
-      passenger_names: String(a.passenger_names || "").trim(),
+      passenger_names: passengerNames,
       destination,
       purpose,
-      whatsapp_opt_in: Boolean(a.whatsapp_opt_in),
-      hotel_provided: Boolean(a.hotel_provided),
+      whatsapp_opt_in: a.whatsapp_opt_in === true,
+      hotel_provided: a.hotel_provided === true,
       start_date: startDate,
       end_date: endDate,
       document_path: filePath,
