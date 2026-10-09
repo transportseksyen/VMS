@@ -150,7 +150,53 @@ Deno.serve(async (request: Request) => {
       sent_at: emailResult.status === "sent" ? new Date().toISOString() : null
     });
 
-    return reply(200, { success: true, id: applicationId, reference, emailStatus: emailResult.status });
+    // Notify active Fleet Managers in the selected agency and all active Super Admins.
+    const { data: staffRows } = await admin.from("fms_profiles")
+      .select("id,full_name,email,role,agency_id")
+      .eq("status", "active")
+      .in("role", ["fleet_manager", "super_admin"]);
+    const recipients = (staffRows || []).filter((staff: Record<string, any>) =>
+      staff.role === "super_admin" || staff.agency_id === agencyId
+    );
+    const staffSubject = "New FMS vehicle request awaiting assignment — " + reference;
+    const managerDeliveryResults = await Promise.all(recipients.map(async (staff: Record<string, any>) => {
+      const result = await sendEmail(
+        String(staff.email || ""),
+        staffSubject,
+        "<p>Dear " + escapeHtml(String(staff.full_name || "Fleet Manager")) + ",</p>" +
+        "<p>A new vehicle request requires review and vehicle/driver assignment.</p>" +
+        "<p><strong>Reference:</strong> " + escapeHtml(reference) +
+        "<br><strong>Applicant:</strong> " + escapeHtml(name) +
+        "<br><strong>Organization:</strong> " + escapeHtml(applicantAgency) +
+        "<br><strong>Destination:</strong> " + escapeHtml(destination) +
+        "<br><strong>Passengers:</strong> " + passengers +
+        "<br><strong>Vehicles requested:</strong> " + cars +
+        "<br><strong>Travel dates:</strong> " + startDate + " to " + endDate + "</p>" +
+        "<p>Sign in to FMS to review the submitted application.</p><p>Fleet Management System — Sarawak</p>"
+      );
+      await admin.from("fms_notifications").insert({
+        recipient_profile_id: staff.id,
+        recipient_email: staff.email,
+        subject: staffSubject,
+        body: "New application " + reference + " awaits assignment. Destination: " + destination,
+        notification_type: "application_submitted_internal",
+        related_table: "fms_applications",
+        related_record_id: applicationId,
+        email_status: result.status,
+        email_error: result.error ? String(result.error).slice(0, 1000) : null,
+        sent_at: result.status === "sent" ? new Date().toISOString() : null
+      });
+      return result.status;
+    }));
+
+    return reply(200, {
+      success: true,
+      id: applicationId,
+      reference,
+      emailStatus: emailResult.status,
+      internalNotificationCount: managerDeliveryResults.length,
+      internalEmailStatuses: managerDeliveryResults
+    });
   } catch (error) {
     console.error("submit-application", error);
     return reply(500, { error: "An unexpected server error occurred" });
