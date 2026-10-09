@@ -36,19 +36,36 @@ jobs:
         env:
           VITE_SUPABASE_URL: https://onxxgdbnonctwiykwdxo.supabase.co
           VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_VPJ_qVVMLV8ov0EWaA0opw_V90mFdFs
-      - name: Copy built site to Pages branch root
+      - name: Sync generated site with retries
         run: |
-          rm -rf assets
-          cp -a web/dist/. .
-          touch .nojekyll
-      - name: Commit generated site for branch-based Pages fallback
-        run: |
+          set -e
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html assets .nojekyll
-          if git diff --cached --quiet; then
-            echo "Generated FMS site is already up to date."
-          else
+
+          for attempt in 1 2 3; do
+            echo "Publishing FMS web build (attempt $attempt/3)"
+            rm -rf assets
+            cp -a web/dist/. .
+            touch .nojekyll
+            git add index.html assets .nojekyll
+
+            if git diff --cached --quiet; then
+              echo "Generated FMS site is already up to date."
+              exit 0
+            fi
+
             git commit -m "chore: publish generated FMS Pages assets"
-            git push
-          fi
+            if git push origin HEAD:main; then
+              echo "Generated FMS site published."
+              exit 0
+            fi
+
+            echo "Remote branch changed during publishing; refreshing source and rebuilding."
+            git fetch origin main
+            git reset --hard origin/main
+            npm --prefix web install
+            npm --prefix web run build
+          done
+
+          echo "Could not publish generated FMS assets after three attempts."
+          exit 1
