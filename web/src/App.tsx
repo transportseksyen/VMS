@@ -650,18 +650,34 @@ export default function App() {
 
   async function reviewFuel(row: Row, decision: 'approved' | 'returned') {
     if (!supabase || !profile || !['fleet_manager','super_admin'].includes(profile.role)) return;
-    let remarks = '';
+    let reason = '';
     if (decision === 'returned') {
-      const reason = window.prompt('Enter the correction required:');
-      if (!reason || !reason.trim()) return;
-      remarks = reason.trim();
+      const entered = window.prompt('Enter the correction required:');
+      if (!entered || entered.trim().length < 3) return;
+      reason = entered.trim();
     }
-    const { error: reviewError } = await supabase.from('fms_fuel_transactions').update({
-      status: decision, reviewed_by: profile.id, reviewed_at: new Date().toISOString(),
-      review_remarks: remarks || null, updated_at: new Date().toISOString()
-    }).eq('id', row.id);
-    if (reviewError) setError(reviewError.message);
-    else { setNotice(decision === 'approved' ? 'Fuel transaction approved.' : 'Fuel transaction returned for correction.'); await loadRows('fuel'); }
+    setBusy(true); setError(''); setNotice('');
+    const { error: reviewError } = await supabase.rpc('fms_review_fuel_transaction' as any, {
+      p_fuel_transaction_id: row.id,
+      p_decision: decision,
+      p_reason: reason || null
+    } as any);
+    if (reviewError) {
+      setError(reviewError.message);
+      setBusy(false);
+      return;
+    }
+    const notification = await supabase.functions.invoke('send-fms-notification', {
+      body: { type: decision === 'approved' ? 'fuel-approved' : 'fuel-returned', fuel_transaction_id: row.id }
+    });
+    const actionLabel = decision === 'approved' ? 'approved' : 'returned for correction';
+    if (notification.error || notification.data?.success !== true) {
+      setNotice('Fuel report ' + actionLabel + '. The decision was saved, but the driver notification could not be confirmed.');
+    } else {
+      setNotice('Fuel report ' + actionLabel + '. Driver email: ' + (notification.data?.emailStatus || 'unknown') + ', WhatsApp: ' + (notification.data?.whatsappStatus || 'unknown') + '.');
+    }
+    await Promise.all([loadRows('fuel'),loadRows('notifications'),loadCounts()]);
+    setBusy(false);
   }
 
   async function setAvailability(event: FormEvent<HTMLFormElement>) {
