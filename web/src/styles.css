@@ -310,3 +310,8 @@ td:first-child { color: #253a56; font-weight: 700; }
 .check-label { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; color: #67778b; font-size: 11px; font-weight: 500; line-height: 1.55; cursor: pointer; }
 .check-label input[type="checkbox"] { width: 16px; height: 16px; flex: 0 0 16px; margin: 1px 0 0; padding: 0; accent-color: #234f8d; box-shadow: none; }
 .check-label span { flex: 1; }
+
+.inline-role-form { display: grid; grid-template-columns: minmax(120px,1fr) minmax(150px,1.3fr) auto; align-items: end; gap: 8px; min-width: 360px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.inline-role-form label { min-width: 0; }
+.inline-role-form select { padding: 8px; font-size: 12px; }
+@media (max-width: 640px) { .inline-role-form { grid-template-columns: 1fr; min-width: 220px; } }
