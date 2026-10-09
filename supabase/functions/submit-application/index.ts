@@ -69,13 +69,14 @@ Deno.serve(async (request: Request) => {
     const email = String(a.email || "").trim();
     const phone = String(a.phone || "").trim();
     const destination = String(a.destination || "").trim();
+    const purpose = String(a.purpose || "").trim();
     const agencyId = String(a.agency_id || "");
     const passengers = Number(a.passenger_count);
     const cars = Number(a.vehicles_requested);
     const startDate = a.start_date;
     const endDate = a.end_date;
 
-    if (!name || !applicantAgency || !email || !phone || !destination || !agencyId) {
+    if (!name || !applicantAgency || !email || !phone || !destination || !purpose || !agencyId) {
       return reply(400, { error: "Please complete all required fields" });
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return reply(400, { error: "Invalid email address" });
@@ -111,6 +112,7 @@ Deno.serve(async (request: Request) => {
       agency_id: agencyId,
       applicant_name: name,
       applicant_agency_name: applicantAgency,
+      purpose,
       email, phone,
       passenger_count: passengers,
       vehicles_requested: cars,
