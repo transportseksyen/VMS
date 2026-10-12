@@ -1,7 +1,8 @@
 -- Enforce no overlapping proposed/approved reservations at the database layer.
 -- Application-level checks provide friendly errors; these constraints also protect
 -- against two concurrent transactions passing those checks at the same time.
-CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA extensions;
 
 ALTER TABLE public.fms_assignments
   ADD CONSTRAINT fms_assignments_no_overlapping_vehicle
