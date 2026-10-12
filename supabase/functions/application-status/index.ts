@@ -52,7 +52,7 @@ Deno.serve(async (request: Request) => {
     const { data, error } = await admin.from("fms_applications")
       .select("reference,status,destination,start_date,end_date,vehicles_requested,decision_reason,submitted_at,decided_at")
       .eq("reference", reference)
-      .ilike("email", email)
+      .eq("email", email)
       .maybeSingle();
     if (error) return reply(503, { error: "Status checking is temporarily unavailable" });
     if (!data) return reply(404, { error: "We could not find a matching application. Check the reference and applicant email." });
