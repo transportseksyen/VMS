@@ -879,7 +879,9 @@ export default function App() {
       setError(urlError?.message || 'Document could not be opened for your account.');
       return;
     }
-    window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+    // Navigate in the current tab so browsers and the Android/iOS WebViews do not
+    // block a new window after the asynchronous signed-URL request. Use Back to return to FMS.
+    window.location.assign(data.signedUrl);
   }
 
   async function reviewFuel(row: Row, decision: 'approved' | 'returned') {
