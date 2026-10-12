@@ -32,8 +32,10 @@ public class MainActivity extends Activity {
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
-        settings.setAllowFileAccess(true);
+        // The FMS app is remote HTTPS content; local-file access is unnecessary.
+        settings.setAllowFileAccess(false);
         settings.setAllowContentAccess(true);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
         settings.setLoadWithOverviewMode(false);
@@ -41,18 +43,33 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
 
         CookieManager.getInstance().setAcceptCookie(true);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, false);
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
                 String host = uri.getHost();
-                if (host != null && (host.endsWith("onhercules.app") || host.equals("transportseksyen.github.io") || host.endsWith(".supabase.co"))) {
+                String scheme = uri.getScheme();
+                boolean secureHttps = "https".equalsIgnoreCase(scheme);
+                boolean fmsSite = "transportseksyen.github.io".equalsIgnoreCase(host)
+                        && (uri.getPath() != null)
+                        && (uri.getPath().equals("/VMS") || uri.getPath().startsWith("/VMS/"));
+                boolean fmsApi = "onxxgdbnonctwiykwdxo.supabase.co".equalsIgnoreCase(host);
+                if (secureHttps && (fmsSite || fmsApi)) {
                     view.loadUrl(uri.toString());
                     return true;
                 }
-                startActivity(new Intent(Intent.ACTION_VIEW, uri));
+
+                // Open ordinary external web links in the device browser; reject custom schemes.
+                if ("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme)
+                        || "mailto".equalsIgnoreCase(scheme) || "tel".equalsIgnoreCase(scheme)) {
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, uri));
+                    } catch (Exception ignored) {
+                        // No compatible external app is installed for this link.
+                    }
+                }
                 return true;
             }
         });
