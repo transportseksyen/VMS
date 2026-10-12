@@ -45,10 +45,12 @@ Configure these under Supabase → Edge Functions → Secrets, or using the Supa
 Supabase's built-in `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are read only inside Edge Functions. Never create `VITE_SUPABASE_SERVICE_ROLE_KEY` or expose a service-role key in frontend code.
 
 The functions deployed to the current Supabase project are:
-- `submit-application` — public application intake and private PDF upload.
+- `submit-application` — public application intake, rate limiting, applicant email normalization and private PDF upload.
+- `application-status` — public status lookup using the exact normalized applicant email and application reference.
 - `admin-users` — agency and staff administration.
-- `send-fms-notification` — approval and assignment email notifications.
+- `send-fms-notification` — role-checked approval, assignment, fuel and registry notifications.
 - `bootstrap-admin` — allowlisted first administrator creation.
+- `fms-system-health` — Super Admin-only configuration and service health checks.
 
 Email actions report `not_configured` if the Resend secrets are not set. Staff invitations also depend on the Supabase Auth email configuration.
 
@@ -106,6 +108,15 @@ To finish deployment:
 
 If a custom domain is needed later, connect it through the GitHub Pages or Vercel project settings and verify it before changing the mobile wrappers.
 
+## Security audit repairs applied on October 12, 2026
+
+- Registry RPCs that mutate or review records no longer permit anonymous execution; the old `fms_approve_vehicle` and `fms_approve_driver` RPC entry points are disabled so approval must use the current audited workflow.
+- Table-wide direct write, delete and truncate permissions were removed from the public API roles for the `fms_` tables. Only the required read privileges and selected insert/update columns are re-granted, with RLS policies still enforced.
+- Private document upload policies now validate the agency path and permit Super Admin uploads for an explicitly selected agency. New maintenance records must start in `submitted` state.
+- Public applicant status lookup now uses exact email matching rather than SQL-style wildcard matching; new applicant email values are normalized to lowercase before saving.
+- Mobile WebViews are restricted to the published FMS path and this project's Supabase API origin, and secured attachment opening uses same-tab navigation to avoid popup blocking.
+- Supabase Auth leaked-password protection still needs to be enabled in the project dashboard; see the Security checklist below.
+
 ## Security and production checklist
 
 - Replace the “SC” logo placeholder with an authentic, approved Sarawak State Crest asset. No crest image was supplied to this repository.
@@ -123,14 +134,13 @@ If a custom domain is needed later, connect it through the GitHub Pages or Verce
 The web app has working database-backed login, public vehicle request submission with start/end dates and one combined PDF, agency administration, staff invitations/approval, vehicle and driver registry submissions/approval, proposed assignment submission and approval/rejection RPCs, a basic assignment calendar, fuel transaction/receipt submission and review, maintenance record/document upload, short-lived signed document URLs and live record-count reports.
 
 The following still require further implementation/testing before the platform can be called fully production-ready:
-- Public application status lookup by reference and verification code.
-- Multi-vehicle assignments when an application requests more than one vehicle.
 - Full CRUD/edit/delete flows with approval history for every registry type.
+- End-to-end verification that an application requesting multiple vehicles is only finalized when all requested vehicle/driver assignments are approved.
 - Complete exports to PDF/Excel and richer monthly/yearly reporting.
 - WhatsApp delivery still needs the real Meta business account, a supported Graph API version, the approved Utility template, access token and phone-number ID to be set in Function Secrets. The code records delivery status and only sends to recipients who opted in.
 - End-to-end testing of assignment changes/cancellations and email delivery.
 - Final official crest asset and agency-approved privacy text.
-- Production deployment URL and real-device validation.
-- The current native iOS wrapper still points at the old OnHercules prototype URL; update it to the verified FMS production URL after deployment, then rebuild and test on real devices.
+- Repeatable live URL and real-device validation across iPhone, Android and desktop browsers (GitHub Actions build success alone is not a functional browser test).
+- The Android and iOS WebView source now points to the published FMS URL and restricts in-app navigation to the FMS path and this project's Supabase host; the iOS artifact still needs signing and provisioning before installation.
 - A signed iOS application and a final Android package are separate mobile deliverables; they must be built and tested before claiming app-store/phone distribution readiness.
 - The existing mobile wrappers are not yet verified to use the new React/Supabase FMS web app.
