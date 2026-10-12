@@ -48,12 +48,16 @@ final class FMSViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
             return
         }
 
-        if host == "transportseksyen.github.io" ||
-           host == "vehicle-management-system-311560.onhercules.app" ||
-           host.hasSuffix(".onhercules.app") ||
-           host == "onxxgdbnonctwiykwdxo.supabase.co" {
+        let isSecureHTTPS = destination.scheme?.lowercased() == "https"
+        let path = destination.path
+        let isFMSWebOrigin = host == "transportseksyen.github.io" &&
+            (path == "/VMS" || path.hasPrefix("/VMS/"))
+        let isFMSAPIOrigin = host == "onxxgdbnonctwiykwdxo.supabase.co"
+
+        if isSecureHTTPS && (isFMSWebOrigin || isFMSAPIOrigin) {
             decisionHandler(.allow)
         } else {
+            // External destinations open outside the authenticated FMS WebView.
             UIApplication.shared.open(destination)
             decisionHandler(.cancel)
         }
