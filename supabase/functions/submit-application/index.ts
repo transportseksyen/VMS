@@ -66,7 +66,7 @@ Deno.serve(async (request: Request) => {
 
     const name = String(a.applicant_name || "").trim();
     const applicantAgency = String(a.applicant_agency_name || "").trim();
-    const email = String(a.email || "").trim();
+    const email = String(a.email || "").trim().toLowerCase();
     const phone = String(a.phone || "").trim();
     const destination = String(a.destination || "").trim();
     const purpose = String(a.purpose || "").trim();
