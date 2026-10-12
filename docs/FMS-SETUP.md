@@ -111,6 +111,7 @@ If a custom domain is needed later, connect it through the GitHub Pages or Verce
 ## Security audit repairs applied on October 12, 2026
 
 - Registry RPCs that mutate or review records no longer permit anonymous execution; the old `fms_approve_vehicle` and `fms_approve_driver` RPC entry points are disabled so approval must use the current audited workflow.
+- Database exclusion constraints now prevent overlapping proposed/approved assignments for the same vehicle or driver, including concurrent submission races. The `btree_gist` extension is installed in the `extensions` schema rather than `public`.
 - Table-wide direct write, delete and truncate permissions were removed from the public API roles for the `fms_` tables. Only the required read privileges and selected insert/update columns are re-granted, with RLS policies still enforced.
 - Private document upload policies now validate the agency path and permit Super Admin uploads for an explicitly selected agency. New maintenance records must start in `submitted` state.
 - Public applicant status lookup now uses exact email matching rather than SQL-style wildcard matching; new applicant email values are normalized to lowercase before saving.
